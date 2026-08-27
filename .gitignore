@@ -1,0 +1,50 @@
+/.idea
+/.windsurf
+/.vscode
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work
+go.work.sum
+
+# Build output
+dist/
+terraform-provider-nodeping
+sbom.json
+
+# OpenTofu / Terraform state and plans
+# plan.json is listed explicitly: a committed plan file was the source of a
+# third-party data leak in the upstream repository. See NOTICE.md.
+plan.json
+*.tfplan
+tfplan*
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Environment
+.env
+.envrc
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage.out
+coverage.html
+
+# Vendor (if used)
+vendor/

@@ -1,0 +1,98 @@
+image: golang:1.26
+
+definitions:
+  caches:
+    gomod: /go/pkg/mod
+
+  steps:
+    - step: &fmt-vet
+        name: Format and Vet
+        caches: [gomod]
+        script:
+          - test -z "$(gofmt -l . | tee /dev/stderr)" || { echo "gofmt violations above"; exit 1; }
+          - go vet ./...
+
+    - step: &lint
+        name: Lint
+        caches: [gomod]
+        script:
+          - go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0
+          - golangci-lint run --timeout 5m ./...
+
+    - step: &test
+        name: Test and Coverage
+        caches: [gomod]
+        script:
+          - go test ./... -race -coverprofile=coverage.out -covermode=atomic
+          - go tool cover -func=coverage.out | tail -1
+          # ABT standard: 80% statement coverage floor.
+          - |
+            PCT=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}' | tr -d '%')
+            echo "total coverage: ${PCT}%"
+            awk -v p="$PCT" 'BEGIN { exit (p+0 >= 80) ? 0 : 1 }' \
+              || { echo "coverage ${PCT}% is below the 80% floor"; exit 1; }
+        artifacts:
+          - coverage.out
+
+    - step: &vulncheck
+        name: Vulnerability Scan
+        caches: [gomod]
+        script:
+          - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+    - step: &secret-scan
+        name: Secret Scan
+        image: aquasec/trivy:latest
+        script:
+          - trivy fs --scanners secret --exit-code 1 --no-progress .
+
+    - step: &build
+        name: Build
+        caches: [gomod]
+        script:
+          - go build -trimpath -ldflags "-s -w -X main.version=dev-${BITBUCKET_BUILD_NUMBER}" -o /dev/null .
+
+    - step: &release
+        name: Build and Publish Provider
+        caches: [gomod]
+        script:
+          # goreleaser cannot publish to Bitbucket, so build only and ship the
+          # artifacts to the ABT private provider mirror ourselves.
+          - apt-get update -qq && apt-get install -y -qq gnupg awscli
+          - echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          - export GPG_FINGERPRINT=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+          - go install github.com/goreleaser/goreleaser/v2@latest
+          - goreleaser release --clean --skip=publish
+          - aws s3 sync dist/ "s3://${PROVIDER_MIRROR_BUCKET}/atlanticbt.com/abt/nodeping/${BITBUCKET_TAG}/"
+              --exclude "*" --include "*.zip" --include "*SHA256SUMS*"
+
+pipelines:
+  pull-requests:
+    '**':
+      - parallel:
+          - step: *fmt-vet
+          - step: *lint
+          - step: *test
+          - step: *vulncheck
+          - step: *secret-scan
+
+  branches:
+    main:
+      - parallel:
+          - step: *fmt-vet
+          - step: *lint
+          - step: *test
+          - step: *vulncheck
+          - step: *secret-scan
+      - step: *build
+
+  tags:
+    'v*':
+      - parallel:
+          - step: *test
+          - step: *vulncheck
+          - step: *secret-scan
+      - step:
+          <<: *release
+          trigger: manual
+          deployment: production

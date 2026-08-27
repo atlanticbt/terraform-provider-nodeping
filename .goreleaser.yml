@@ -1,0 +1,58 @@
+version: 2
+
+project_name: terraform-provider-nodeping
+
+before:
+  hooks:
+    # `go mod tidy` can mutate go.mod/go.sum mid-release, shipping dependencies
+    # that differ from what CI tested. Download only.
+    - go mod download
+
+builds:
+  - binary: '{{ .ProjectName }}_v{{ .Version }}'
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    # Reproducible builds: without this, binaries embed build time and differ
+    # byte-for-byte between runs of the same commit.
+    mod_timestamp: '{{ .CommitTimestamp }}'
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+archives:
+  - formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    signature: "${artifact}.sig"
+    output: true
+    cmd: gpg
+    args:
+      # -u pins the signing key. Without it gpg signs with whatever default
+      # secret key is in the runner keyring, silently using the wrong one if
+      # more than one is ever imported.
+      - "--batch"
+      - "--yes"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--pinentry-mode"
+      - "loopback"
+      - "--passphrase"
+      - "{{ .Env.GPG_PASSPHRASE }}"
+      - "--detach-sign"
+      - "--output"
+      - "${signature}"
+      - "${artifact}"
+
+release:
+  # Bitbucket is not a goreleaser publish target. The pipeline runs with
+  # --skip=publish and uploads to the ABT provider mirror.
+  disable: true
