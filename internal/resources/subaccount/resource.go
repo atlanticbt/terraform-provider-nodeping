@@ -119,6 +119,8 @@ func (r *SubaccountResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
+	setIdentity(ctx, resp.Identity, plan.ID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -162,6 +164,8 @@ func (r *SubaccountResource) Read(ctx context.Context, req resource.ReadRequest,
 	if state.AutodiagNotifications.IsNull() || state.AutodiagNotifications.IsUnknown() {
 		state.AutodiagNotifications = types.StringValue("false")
 	}
+
+	setIdentity(ctx, resp.Identity, state.ID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -220,6 +224,12 @@ func (r *SubaccountResource) Update(ctx context.Context, req resource.UpdateRequ
 		return
 	}
 
+	// Update writes the identity too. Both members are immutable, so this
+	// re-states the same values -- but on a resource created before the core
+	// supported identity there is no stored identity yet, and the framework
+	// rejects an update that leaves it null.
+	setIdentity(ctx, resp.Identity, plan.ID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -255,8 +265,25 @@ func (r *SubaccountResource) Delete(ctx context.Context, req resource.DeleteRequ
 }
 
 func (r *SubaccountResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	id := strings.TrimSpace(req.ID)
+	// An "identity" import block is handled first; anything else is the
+	// established bare string ID, which must keep working unchanged.
+	id, fromIdentity := identityImportValues(ctx, req, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !fromIdentity {
+		id = req.ID
+	}
+
+	id = strings.TrimSpace(id)
 	if id == "" {
+		if fromIdentity {
+			resp.Diagnostics.AddError(
+				"Invalid Import Identity",
+				"The 'id' attribute of the import identity must be a non-empty NodePing account ID such as '201203232048C76FH'.",
+			)
+			return
+		}
 		resp.Diagnostics.AddError(
 			"Invalid Import ID",
 			"Expected a NodePing account ID such as '201203232048C76FH', got an empty string.",
@@ -265,6 +292,11 @@ func (r *SubaccountResource) ImportState(ctx context.Context, req resource.Impor
 	}
 
 	tflog.Debug(ctx, "Importing subaccount", map[string]interface{}{"id": id})
+
+	setIdentity(ctx, resp.Identity, types.StringValue(id), &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
 
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), resource.ImportStateRequest{ID: id}, resp)
 }

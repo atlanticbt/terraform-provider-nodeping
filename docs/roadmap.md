@@ -18,9 +18,21 @@ Ordered by what blocks depending on this provider in production.
 - Correctness work carried over from the fork: the `mapForRead`/`mapForApply` split,
   contact address ordering and identity, idempotent deletes, non-idempotent `POST` no
   longer retried, type-tolerant decoding, per-resource `customer_id`.
-- Coverage 11.3% → 94%+. All `govulncheck` findings cleared.
-- Release pipeline on Bitbucket with reproducible builds, secret scanning, and a coverage
-  gate.
+- **Resource identity** on all seven resources, enabling `import { identity = {...} }`.
+- **Provider config validation** — `api_url` must be `https` outside loopback (a plaintext
+  endpoint sent the API token in cleartext with no guardrail), numeric tuning bounds, and
+  `default_tags` empty-string rejection.
+- **Shared response tolerance in the client** — one error-in-200 detector and one
+  not-found classifier for all seven resources, replacing sixteen duplicated blocks. This
+  closed a hazard where a `200 {"error": "permission denied"}` was read as "resource
+  absent", which would have made OpenTofu delete from state and rebuild live
+  infrastructure.
+- **Ad-hoc maintenance escape hatch** — `scripts/nodeping-adhoc-maintenance.sh` plus a
+  `terraform_data` recipe, deliberately outside provider state.
+- Coverage 11.3% → 95%+. All `govulncheck` findings cleared.
+- Release pipeline on Bitbucket with reproducible builds, secret scanning, a coverage gate,
+  and mirror publishing over OIDC with `h1:` hashes. GPG signing removed — mirrors do not
+  enforce it, so the signature would never have been verified.
 
 ## Next — the gate on trusting this in production
 
@@ -51,12 +63,6 @@ signing machinery could be dropped to remove the key-management burden.
 
 ## Later
 
-- **Resource identity** (OpenTofu 1.12) — enables `import { identity = {...} }`. Safe in
-  both directions: older versions never call the RPCs, 1.12 treats `Unimplemented` as a
-  warning.
-- **`api_url` scheme validation** — a plaintext `http://` URL downgrades the bearer token
-  to cleartext. Operator-controlled rather than attacker-controlled, so a footgun rather
-  than a vulnerability, but it deserves a guardrail.
 - **Generated docs.** The `docs/resources/*` and `docs/data-sources/*` pages are
   hand-written and drift from the schema. Add `tfplugindocs` and a CI drift check.
 - **Check token regeneration** (A-011) — needs a separate resource or action, not an
@@ -64,6 +70,15 @@ signing machinery could be dropped to remove the key-management burden.
 - **Upper bounds for `threshold` and `sens`** — NodePing's documented maxima could not be
   confirmed, so no validator was invented.
 - **Deprecated `password` removal** — once consumers have migrated to `password_wo`.
+- **Subaccount `contactname`/`email` drift detection** (A-005) — currently impossible,
+  because NodePing does not return the fields. One unverified idea: creating a subaccount
+  also creates a primary contact, so `GET /contacts?customerid=X` may expose them. The
+  contact can be edited or deleted independently of the account, so this is a heuristic at
+  best. Investigate once a test subaccount token exists; do not build on it before then.
+- **First-class ad-hoc maintenance** (A-003) — blocked on OpenTofu shipping an equivalent
+  of Terraform's `action` blocks. They have signalled possible deliberate divergence
+  (opentofu#3309), so this may never arrive. The `terraform_data` + provisioner recipe is
+  the answer until it does.
 
 ## Known limitations
 

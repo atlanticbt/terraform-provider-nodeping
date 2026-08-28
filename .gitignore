@@ -17,6 +17,10 @@ go.work.sum
 dist/
 terraform-provider-nodeping
 sbom.json
+# Compiled helpers under tools/ -- `go build` in those directories drops a
+# binary named after its module, which is easy to stage by accident.
+tools/*/mirror-index
+tools/**/*.bin
 
 # OpenTofu / Terraform state, plans, and variable files
 #

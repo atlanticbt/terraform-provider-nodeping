@@ -37,6 +37,57 @@ and belongs in the NodePing UI, a `curl` call, or a runbook script, not in
 state. The `nodeping_maintenance` and `nodeping_maintenances` data sources will
 still report an ad-hoc window for as long as one exists.
 
+### Running one from OpenTofu anyway
+
+If you need to open an ad-hoc window as part of an apply — silencing checks
+around a deploy, say — drive it imperatively with `terraform_data` and a
+provisioner. This deliberately keeps the window out of provider state, so the
+recreate loop described above cannot occur.
+
+`scripts/nodeping-adhoc-maintenance.sh` in this repository does the API call
+with input validation and error handling:
+
+```hcl
+resource "terraform_data" "deploy_window" {
+  # Each new value opens exactly one new window. Use something that changes
+  # once per deploy -- an image tag, a release id -- not `timestamp()`, which
+  # would fire on every plan.
+  triggers_replace = [var.release_version]
+
+  provisioner "local-exec" {
+    command = "${path.module}/scripts/nodeping-adhoc-maintenance.sh --duration 15 --checks ${join(",", local.deploy_check_ids)}"
+
+    # The token goes in the environment, never in `command`. Anything
+    # interpolated into the command string is visible in `ps` output on the
+    # machine running the apply.
+    environment = {
+      NODEPING_API_TOKEN   = var.nodeping_api_token
+      NODEPING_CUSTOMER_ID = var.subaccount_id
+    }
+  }
+}
+```
+
+Caveats worth understanding before using this:
+
+- **Provisioners are a last resort**, and this is one of the few cases that
+  genuinely qualifies: there is no declarative way to express a fire-and-forget
+  action. OpenTofu has no equivalent of Terraform's `action` blocks and has
+  signalled it may diverge rather than adopt them
+  ([opentofu#3309](https://github.com/opentofu/opentofu/issues/3309)), so this
+  workaround is not obviously temporary.
+- **Nothing is tracked.** OpenTofu does not know the window exists, cannot show
+  it in a plan, and will not close it early. Use the data sources to observe it.
+- **`triggers_replace` is stored in state.** Never interpolate a secret into it.
+  The `environment` block is not persisted; the `command` string is not
+  persisted either, but it *is* visible in the process table while running.
+- **It runs on the machine doing the apply**, which needs `bash` and `curl`.
+- **Failure fails the apply.** Add `on_failure = continue` if opening a
+  maintenance window should not block a deploy.
+
+Replace this with a first-class resource if and when OpenTofu ships an actions
+equivalent.
+
 ## Example Usage
 
 ```hcl

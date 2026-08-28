@@ -79,6 +79,8 @@ func (r *ScheduleResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -114,6 +116,8 @@ func (r *ScheduleResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.CustomerID = resolveCustomerID(state.CustomerID, schedule.CustomerID)
 	mapDaysForRead(&state, schedule.Data)
 
+	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -141,6 +145,12 @@ func (r *ScheduleResource) Update(ctx context.Context, req resource.UpdateReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Update writes the identity too. Both members are immutable, so this
+	// re-states the same values -- but on a resource created before the core
+	// supported identity there is no stored identity yet, and the framework
+	// rejects an update that leaves it null.
+	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -175,31 +185,52 @@ func (r *ScheduleResource) Delete(ctx context.Context, req resource.DeleteReques
 }
 
 func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	idParts := strings.Split(req.ID, ":")
-
 	var scheduleID string
 	var customerID string
 
-	switch len(idParts) {
-	case 1:
-		scheduleID = idParts[0]
-	case 2:
-		customerID = idParts[0]
-		scheduleID = idParts[1]
-	default:
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'schedule_id' or 'customer_id:schedule_id', got: %s", req.ID),
-		)
-		return
-	}
+	// An "identity" import block is handled first; anything else is the
+	// established string form, which must keep working unchanged.
+	if idFromIdentity, customerFromIdentity, ok := identityImportValues(ctx, req, &resp.Diagnostics); ok {
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if idFromIdentity == "" {
+			resp.Diagnostics.AddError(
+				"Invalid Import Identity",
+				"The 'id' attribute of the import identity must be a non-empty schedule ID.",
+			)
+			return
+		}
+		scheduleID = idFromIdentity
+		customerID = customerFromIdentity
+	} else {
+		if resp.Diagnostics.HasError() {
+			return
+		}
 
-	if scheduleID == "" || (len(idParts) == 2 && customerID == "") {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'schedule_id' or 'customer_id:schedule_id', got: %s", req.ID),
-		)
-		return
+		idParts := strings.Split(req.ID, ":")
+
+		switch len(idParts) {
+		case 1:
+			scheduleID = idParts[0]
+		case 2:
+			customerID = idParts[0]
+			scheduleID = idParts[1]
+		default:
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'schedule_id' or 'customer_id:schedule_id', got: %s", req.ID),
+			)
+			return
+		}
+
+		if scheduleID == "" || (len(idParts) == 2 && customerID == "") {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'schedule_id' or 'customer_id:schedule_id', got: %s", req.ID),
+			)
+			return
+		}
 	}
 
 	tflog.Debug(ctx, "Importing schedule", map[string]interface{}{
@@ -229,6 +260,8 @@ func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportS
 		CustomerID: resolveCustomerID(customerIDValue, schedule.CustomerID),
 	}
 	mapDaysForRead(&state, schedule.Data)
+
+	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

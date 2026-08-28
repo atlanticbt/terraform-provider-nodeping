@@ -49,7 +49,7 @@ func TestBuildCreateRequest_typeSpecificAttributes(t *testing.T) {
 	plan.VerifyVolume = types.BoolValue(true)
 	plan.VolumeMin = types.Int64Value(-45)
 
-	req := r.buildCreateRequest(ctx, &plan, types.StringNull(), &diags)
+	req := r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -89,7 +89,7 @@ func TestBuildCreateRequest_typeSpecificAttributes(t *testing.T) {
 		t.Errorf("dohdot must not be sent for a REDIS check, got %q", req.DoHDoT)
 	}
 	plan.Type = types.StringValue("DOHDOT")
-	req = r.buildCreateRequest(ctx, &plan, types.StringNull(), &diags)
+	req = r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags)
 	if req.DoHDoT != "dot" {
 		t.Errorf("dohdot must be sent for a DOHDOT check, got %q", req.DoHDoT)
 	}
@@ -108,7 +108,7 @@ func TestBuildCreateRequest_volumeMinZeroIsTransmitted(t *testing.T) {
 	plan.VolumeMin = types.Int64Value(0)
 	plan.VerifyVolume = types.BoolValue(false)
 
-	req := r.buildCreateRequest(ctx, &plan, types.StringNull(), &diags)
+	req := r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags)
 	body, err := json.Marshal(req)
 	if err != nil {
 		t.Fatalf("could not marshal the request: %v", err)

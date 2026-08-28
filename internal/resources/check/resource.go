@@ -91,11 +91,12 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 	// Write-only attributes are always null in req.Plan; the configured value
 	// only exists in req.Config.
 	passwordWO := writeOnlyPassword(ctx, req.Config, &resp.Diagnostics)
+	hostPasswordsWO := writeOnlyHostPasswords(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	createReq := r.buildCreateRequest(ctx, &plan, passwordWO, &resp.Diagnostics)
+	createReq := r.buildCreateRequest(ctx, &plan, passwordWO, hostPasswordsWO, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -117,6 +118,8 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 	tflog.Debug(ctx, "Created check", map[string]interface{}{
 		"id": check.ID,
 	})
+
+	setIdentity(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
 }
@@ -154,6 +157,8 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
+	setIdentity(ctx, resp.Identity, newState.ID, newState.CustomerID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, newState)...)
 }
 
@@ -175,11 +180,12 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	// configured value only exists in req.Config. A bump of
 	// password_wo_version is what caused this update to be planned at all.
 	passwordWO := writeOnlyPassword(ctx, req.Config, &resp.Diagnostics)
+	hostPasswordsWO := writeOnlyHostPasswords(ctx, req.Config, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	createReq := r.buildCreateRequest(ctx, &plan, passwordWO, &resp.Diagnostics)
+	createReq := r.buildCreateRequest(ctx, &plan, passwordWO, hostPasswordsWO, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -203,6 +209,12 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	tflog.Debug(ctx, "Updated check", map[string]interface{}{
 		"id": check.ID,
 	})
+
+	// Update writes the identity too. Both members are immutable, so this
+	// re-states the same values -- but on a resource created before the core
+	// supported identity there is no stored identity yet, and the framework
+	// rejects an update that leaves it null.
+	setIdentity(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
 }
@@ -237,31 +249,52 @@ func (r *CheckResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	idParts := strings.Split(req.ID, ":")
-
 	var checkID string
 	var customerID string
 
-	switch len(idParts) {
-	case 1:
-		checkID = idParts[0]
-	case 2:
-		customerID = idParts[0]
-		checkID = idParts[1]
-	default:
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
-		)
-		return
-	}
+	// An "identity" import block is handled first; anything else is the
+	// established string form, which must keep working unchanged.
+	if idFromIdentity, customerFromIdentity, ok := identityImportValues(ctx, req, &resp.Diagnostics); ok {
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if idFromIdentity == "" {
+			resp.Diagnostics.AddError(
+				"Invalid Import Identity",
+				"The 'id' attribute of the import identity must be a non-empty check ID.",
+			)
+			return
+		}
+		checkID = idFromIdentity
+		customerID = customerFromIdentity
+	} else {
+		if resp.Diagnostics.HasError() {
+			return
+		}
 
-	if checkID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
-		)
-		return
+		idParts := strings.Split(req.ID, ":")
+
+		switch len(idParts) {
+		case 1:
+			checkID = idParts[0]
+		case 2:
+			customerID = idParts[0]
+			checkID = idParts[1]
+		default:
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
+			)
+			return
+		}
+
+		if checkID == "" {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
+			)
+			return
+		}
 	}
 
 	tflog.Debug(ctx, "Importing check", map[string]interface{}{
@@ -290,6 +323,8 @@ func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStat
 	if customerID != "" {
 		state.CustomerID = types.StringValue(customerID)
 	}
+
+	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
@@ -352,6 +387,36 @@ func writeOnlyPassword(ctx context.Context, config tfsdk.Config, diags *diag.Dia
 	return password
 }
 
+// writeOnlyHostPasswords reads hosts[*].password_wo out of the configuration,
+// keyed by the same host identifier the practitioner used. As with the check
+// level password_wo, the value exists only in req.Config: Terraform core strips
+// write-only attributes from both the plan and the state, so reading them from
+// req.Plan would silently yield nulls.
+func writeOnlyHostPasswords(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) map[string]types.String {
+	var hosts types.Map
+	diags.Append(config.GetAttribute(ctx, path.Root("hosts"), &hosts)...)
+	if diags.HasError() || !isSet(hosts) {
+		return nil
+	}
+
+	configHosts := make(map[string]RedisHostModel)
+	diags.Append(hosts.ElementsAs(ctx, &configHosts, false)...)
+	if diags.HasError() {
+		return nil
+	}
+
+	passwords := make(map[string]types.String, len(configHosts))
+	for key, h := range configHosts {
+		if isSet(h.PasswordWO) {
+			passwords[key] = h.PasswordWO
+		}
+	}
+	if len(passwords) == 0 {
+		return nil
+	}
+	return passwords
+}
+
 // ConfigValidators declares the mutually exclusive credential attributes.
 func (r *CheckResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
 	return []resource.ConfigValidator{
@@ -391,6 +456,8 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 			"password_wo_version has no effect without password_wo.",
 		)
 	}
+
+	validateHostCredentials(ctx, config.Hosts, &resp.Diagnostics)
 
 	if !isSet(config.Type) {
 		return
@@ -433,7 +500,51 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 		"SSL, WHOIS, RDAP, SMTP, IMAP4, POP3, DOHDOT and SPEC10RDDS")
 }
 
-func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResourceModel, passwordWO types.String, diags *diag.Diagnostics) client.CheckCreateRequest {
+// validateHostCredentials applies the check level credential rules to every
+// REDIS host entry. resourcevalidator.Conflicting cannot express a path through
+// a map, so the same two rules are enforced here.
+func validateHostCredentials(ctx context.Context, hosts types.Map, diags *diag.Diagnostics) {
+	if !isSet(hosts) {
+		return
+	}
+
+	configHosts := make(map[string]RedisHostModel)
+	diags.Append(hosts.ElementsAs(ctx, &configHosts, false)...)
+	if diags.HasError() {
+		return
+	}
+
+	// Map iteration order is randomised; sort so repeated runs report the same
+	// diagnostics in the same order.
+	keys := make([]string, 0, len(configHosts))
+	for key := range configHosts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		h := configHosts[key]
+		entry := path.Root("hosts").AtMapKey(key)
+
+		if isSet(h.Password) && isSet(h.PasswordWO) {
+			diags.AddAttributeError(
+				entry.AtName("password_wo"),
+				"Invalid Attribute Combination",
+				fmt.Sprintf("hosts[%q] sets both password and password_wo. Only one may be configured.", key),
+			)
+		}
+
+		if isSet(h.PasswordWOVersion) && !isSet(h.PasswordWO) {
+			diags.AddAttributeError(
+				entry.AtName("password_wo_version"),
+				"Missing Required Attribute",
+				fmt.Sprintf("hosts[%q] sets password_wo_version, which has no effect without password_wo.", key),
+			)
+		}
+	}
+}
+
+func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResourceModel, passwordWO types.String, hostPasswordsWO map[string]types.String, diags *diag.Diagnostics) client.CheckCreateRequest {
 	req := client.CheckCreateRequest{
 		Type: plan.Type.ValueString(),
 	}
@@ -669,10 +780,17 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		if len(hosts) > 0 {
 			req.Hosts = make(map[string]client.RedisHost, len(hosts))
 			for key, h := range hosts {
+				// password_wo wins over the deprecated password, exactly as it
+				// does for the check level credential. The two are mutually
+				// exclusive per host at config validation time.
+				password := h.Password.ValueString()
+				if wo, ok := hostPasswordsWO[key]; ok && isSet(wo) {
+					password = wo.ValueString()
+				}
 				req.Hosts[key] = client.RedisHost{
 					Host:     h.Host.ValueString(),
 					Port:     int(h.Port.ValueInt64()),
-					Password: h.Password.ValueString(),
+					Password: password,
 				}
 			}
 		}
@@ -801,6 +919,14 @@ func mapForApply(ctx context.Context, check *client.Check, plan *CheckResourceMo
 
 	result := *plan
 	fillUnknownAttributes(&result, apiModel)
+
+	// Terraform core strips write-only values from the plan before it reaches
+	// the provider, and the framework strips them again from the response. Doing
+	// it here as well costs nothing and keeps the credential out of state even
+	// when the plan was produced by something that does not honour write-only
+	// (opentofu#3964, mocked providers).
+	result.PasswordWO = types.StringNull()
+	result.Hosts = clearHostWriteOnlyPasswords(ctx, result.Hosts, diags)
 
 	// The check ID is only ever produced by the API.
 	if !isSet(result.ID) {
@@ -1164,9 +1290,11 @@ func hostsToMap(ctx context.Context, hosts map[string]client.RedisHost, diags *d
 			port = types.Int64Value(int64(h.Port))
 		}
 		object, d := types.ObjectValue(redisHostAttrTypes, map[string]attr.Value{
-			"host":     types.StringValue(h.Host),
-			"port":     port,
-			"password": types.StringNull(),
+			"host":                types.StringValue(h.Host),
+			"port":                port,
+			"password":            types.StringNull(),
+			"password_wo":         types.StringNull(),
+			"password_wo_version": types.Int64Null(),
 		})
 		diags.Append(d...)
 		elements[key] = object
@@ -1177,9 +1305,42 @@ func hostsToMap(ctx context.Context, hosts map[string]client.RedisHost, diags *d
 	return result
 }
 
-// restoreHostPasswords copies the per-host passwords recorded in prior back
-// onto the freshly read hosts map, keyed by host identifier. Hosts the API no
-// longer reports are dropped, so real drift in host or port still surfaces.
+// clearHostWriteOnlyPasswords nulls hosts[*].password_wo on a hosts map,
+// leaving every other member untouched.
+func clearHostWriteOnlyPasswords(ctx context.Context, hosts types.Map, diags *diag.Diagnostics) types.Map {
+	if !isSet(hosts) {
+		return hosts
+	}
+
+	current := make(map[string]RedisHostModel)
+	diags.Append(hosts.ElementsAs(ctx, &current, false)...)
+	if diags.HasError() {
+		return hosts
+	}
+
+	elements := make(map[string]attr.Value, len(current))
+	for key, h := range current {
+		object, d := types.ObjectValue(redisHostAttrTypes, map[string]attr.Value{
+			"host":                h.Host,
+			"port":                h.Port,
+			"password":            h.Password,
+			"password_wo":         types.StringNull(),
+			"password_wo_version": h.PasswordWOVersion,
+		})
+		diags.Append(d...)
+		elements[key] = object
+	}
+
+	result, d := types.MapValue(RedisHostObjectType(), elements)
+	diags.Append(d...)
+	return result
+}
+
+// restoreHostPasswords copies the per-host credential bookkeeping recorded in
+// prior back onto the freshly read hosts map, keyed by host identifier: the
+// deprecated plaintext password and the password_wo_version counter. password_wo
+// itself is write-only and stays null by construction. Hosts the API no longer
+// reports are dropped, so real drift in host or port still surfaces.
 func restoreHostPasswords(ctx context.Context, prior, current types.Map, diags *diag.Diagnostics) types.Map {
 	if !isSet(prior) || !isSet(current) {
 		return current
@@ -1196,13 +1357,21 @@ func restoreHostPasswords(ctx context.Context, prior, current types.Map, diags *
 	elements := make(map[string]attr.Value, len(currentHosts))
 	for key, h := range currentHosts {
 		password := h.Password
-		if p, ok := priorHosts[key]; ok && isSet(p.Password) {
-			password = p.Password
+		version := h.PasswordWOVersion
+		if p, ok := priorHosts[key]; ok {
+			if isSet(p.Password) {
+				password = p.Password
+			}
+			if isSet(p.PasswordWOVersion) {
+				version = p.PasswordWOVersion
+			}
 		}
 		object, d := types.ObjectValue(redisHostAttrTypes, map[string]attr.Value{
-			"host":     h.Host,
-			"port":     h.Port,
-			"password": password,
+			"host":                h.Host,
+			"port":                h.Port,
+			"password":            password,
+			"password_wo":         types.StringNull(),
+			"password_wo_version": version,
 		})
 		diags.Append(d...)
 		elements[key] = object

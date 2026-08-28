@@ -2,14 +2,19 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -37,7 +42,10 @@ import (
 	subaccountresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/subaccount"
 )
 
-var _ provider.Provider = &NodePingProvider{}
+var (
+	_ provider.Provider                   = &NodePingProvider{}
+	_ provider.ProviderWithValidateConfig = &NodePingProvider{}
+)
 
 type NodePingProvider struct {
 	version string
@@ -141,33 +149,79 @@ The resulting check will have tags: ` + "`[\"managed-by-terraform\", \"team-devo
 				Optional:            true,
 			},
 			"api_url": schema.StringAttribute{
-				Description:         "NodePing API base URL. Defaults to https://api.nodeping.com/api/1. Can also be set via NODEPING_API_URL environment variable.",
-				MarkdownDescription: "NodePing API base URL. Defaults to `https://api.nodeping.com/api/1`. Can also be set via `NODEPING_API_URL` environment variable.",
+				Description:         "NodePing API base URL. Must use https unless the host is a loopback address. Defaults to https://api.nodeping.com/api/1. Can also be set via NODEPING_API_URL environment variable.",
+				MarkdownDescription: "NodePing API base URL. Must use `https` unless the host is a loopback address (`localhost`, `127.0.0.1`, `::1`), which stays available for local mock servers. Defaults to `https://api.nodeping.com/api/1`. Can also be set via `NODEPING_API_URL` environment variable.",
 				Optional:            true,
+				Validators: []validator.String{
+					apiURLValidator{},
+				},
 			},
 			"rate_limit": schema.Float64Attribute{
-				Description: "Maximum requests per second to the NodePing API. Defaults to 10.",
+				Description: "Maximum requests per second to the NodePing API. Must be greater than 0. Defaults to 10.",
 				Optional:    true,
+				Validators: []validator.Float64{
+					positiveFloat64Validator{},
+				},
 			},
 			"max_retries": schema.Int64Attribute{
-				Description: "Maximum number of retries for failed requests. Defaults to 3.",
+				Description: "Maximum number of retries for failed requests. Must be 0 or greater; 0 disables retries. Defaults to 3.",
 				Optional:    true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(0),
+				},
 			},
 			"retry_wait_min": schema.Int64Attribute{
-				Description: "Minimum wait time in seconds between retries. Defaults to 1.",
+				Description: "Minimum wait time in seconds between retries. Must be 0 or greater and must not exceed retry_wait_max. Defaults to 1.",
 				Optional:    true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(0),
+				},
 			},
 			"retry_wait_max": schema.Int64Attribute{
-				Description: "Maximum wait time in seconds between retries. Defaults to 30.",
+				Description: "Maximum wait time in seconds between retries. Must be 0 or greater. Defaults to 30.",
 				Optional:    true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(0),
+				},
 			},
 			"default_tags": schema.ListAttribute{
-				Description:         "Default tags to apply to all resources that support tags (e.g., checks). These tags are merged with resource-specific tags.",
-				MarkdownDescription: "Default tags to apply to all resources that support tags (e.g., checks). These tags are merged with resource-specific tags.",
+				Description:         "Default tags to apply to all resources that support tags (e.g., checks). These tags are merged with resource-specific tags. Tags must not be empty strings.",
+				MarkdownDescription: "Default tags to apply to all resources that support tags (e.g., checks). These tags are merged with resource-specific tags. Tags must not be empty strings.",
 				Optional:            true,
 				ElementType:         types.StringType,
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
+				},
 			},
 		},
+	}
+}
+
+// ValidateConfig carries the rules that span more than one attribute, which an
+// attribute validator cannot express.
+func (p *NodePingProvider) ValidateConfig(ctx context.Context, req provider.ValidateConfigRequest, resp *provider.ValidateConfigResponse) {
+	var config NodePingProviderModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Both bounds have to be known and set for the comparison to mean
+	// anything. When either is omitted, Configure substitutes the client
+	// default, which is already a consistent pair.
+	minSet := !config.RetryWaitMin.IsNull() && !config.RetryWaitMin.IsUnknown()
+	maxSet := !config.RetryWaitMax.IsNull() && !config.RetryWaitMax.IsUnknown()
+
+	if minSet && maxSet && config.RetryWaitMin.ValueInt64() > config.RetryWaitMax.ValueInt64() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("retry_wait_min"),
+			"Invalid Retry Backoff Window",
+			fmt.Sprintf(
+				"retry_wait_min (%d) must not exceed retry_wait_max (%d). Swap the values or widen retry_wait_max.",
+				config.RetryWaitMin.ValueInt64(),
+				config.RetryWaitMax.ValueInt64(),
+			),
+		)
 	}
 }
 
@@ -242,6 +296,20 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 	apiURL := os.Getenv("NODEPING_API_URL")
 	if !config.APIURL.IsNull() {
 		apiURL = config.APIURL.ValueString()
+	}
+
+	// Repeated from the attribute validator because the effective URL can come
+	// from NODEPING_API_URL, which no attribute validator ever sees.
+	if apiURL != "" {
+		if err := validateAPIURL(apiURL); err != nil {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("api_url"),
+				"Invalid NodePing API URL",
+				err.Error()+". "+insecureURLDetail,
+			)
+
+			return
+		}
 	}
 
 	var rateLimit float64 = client.DefaultRateLimit

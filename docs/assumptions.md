@@ -49,6 +49,23 @@ which broke `ListChecks` outright.
 
 **Mitigation:** Type-tolerant decoding and not-found classification live in the client
 layer so every resource inherits the same behaviour and there is one place to fix it.
+Concretely, in `internal/client`:
+
+- `errorMessageFromBody` is the only detector for an error carried by a 2xx.
+  `executeRequest` runs it on every successful response and converts a hit into an
+  `*APIError`, so no endpoint can decode an error document into a resource struct.
+- `isNotFoundMessage`, reachable only through `APIError.IsNotFound`, is the only
+  classifier for NodePing's not-found wording.
+- `notFoundOrWrap` maps an API not-found signal to `*NotFoundError` and wraps everything
+  else; `absentAsNotFound` handles the "decoded fine but the document is empty" case
+  against a per-resource emptiness predicate.
+
+**Accepted risk, deliberately conservative:** message matching is restricted to a short
+fragment list and is skipped for retryable statuses (429 and 5xx). A transient upstream
+failure whose text happens to contain "not found" must stay a real error — classifying it
+as absence would make OpenTofu drop the resource from state and recreate live
+infrastructure on the next apply. The cost of the narrow list is that an unrecognised
+absence phrasing surfaces as an ordinary error, which is the safe direction to fail.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
 
@@ -70,6 +87,20 @@ resource would sit in state describing an object that does not exist, and later 
 create request cannot express `id: "ad-hoc"`, import rejects the ad-hoc ID before any API
 call, and update refuses an ad-hoc ID. Ad-hoc windows remain visible through both data
 sources, and the plural one exposes an `ad_hoc` boolean.
+
+**Escape hatch:** `scripts/nodeping-adhoc-maintenance.sh` performs the API call
+imperatively, intended to be driven from a `terraform_data` resource with a `local-exec`
+provisioner (recipe in `docs/resources/nodeping_maintenance.md`). This is deliberately
+outside provider state, which is what makes it safe — OpenTofu never tries to reconcile
+the window, so it cannot loop. The script validates and bounds every input, rejects check
+IDs containing anything but alphanumerics and hyphens rather than escaping them, requires
+an `https` endpoint outside loopback, and reads the token from the environment so it never
+appears in `ps` output.
+
+**Why this is not obviously temporary:** the declarative answer would be Terraform's
+`action` blocks (1.14). OpenTofu has not implemented them and has signalled it may diverge
+rather than adopt the design (opentofu#3309), so there is no dated horizon for replacing
+the workaround with a first-class resource.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
 
@@ -119,19 +150,38 @@ documentation bug rather than a real constraint. Rejecting it would block valid 
 
 ---
 
-## A-007 — Optional + Computed suppresses attribute-removal diffs
+## A-007 — Optional + Computed suppresses attribute-removal diffs, where it is genuinely needed
 
-**Assumption:** Deleting an attribute from configuration produces no diff for attributes
-marked Optional + Computed without a schema default.
+**Assumption:** `Optional + Computed` is used only where NodePing supplies a value the
+practitioner never set — a documented server-side default, a schema `Default`, or a field
+the API returns unconditionally. Those attributes do not diff when removed from
+configuration.
 
-**Why:** This is the accepted cost of eliminating "Provider produced inconsistent result
-after apply" errors. Any attribute the API normalises or echoes back must be Optional +
-Computed, and the framework then substitutes prior state when config goes null. The
-alternative — Optional-only — makes every server-side normalisation a hard apply failure,
-which is strictly worse.
+**Why:** The framework substitutes prior state when config goes null on an Optional +
+Computed attribute. The alternative for a server-defaulted field — Optional-only — turns
+every server-side normalisation into a hard "inconsistent result after apply" on *every*
+apply, which is strictly worse than a suppressed removal diff.
 
-**Mitigation:** Attributes with schema defaults are unaffected. To clear such an attribute,
-set it explicitly to its zero value rather than removing the line.
+**Scope reduced:** this was originally over-applied. Twenty-four `nodeping_check`
+attributes that NodePing only echoes back when set (`description`, `contentstring`,
+`sendheaders`, `receiveheaders`, `postdata`, `data`, `fields`, `hosts`, `edns`, `username`,
+`email`, `query`, `database`, `namespace`, `whoisserver`, `rdapurl`, `ignore`, `servername`,
+`sshkey`, `clientcert`, `sentinelname`, `dnstoresolve`, `dep`, and the deprecated
+`password`) are now plain `Optional` and diff correctly on removal. Each was verified
+against the mapping functions to confirm the model goes null when the API omits the field.
+
+**Kept deliberately, conservative:** boolean attributes without a schema default (`regex`,
+`invert`, `follow`, `ipv6`, `verify`, `dnsrd`, `oldresultfail`, `verifyvolume`) because
+NodePing's null-versus-`false` behaviour is unconfirmed; `secure`, which NodePing returns
+as both a boolean and a string; `homeloc` and `runlocations`, which NodePing assigns when
+unset; `tags`, whose planned value is written by `ModifyPlan` and so may not be
+non-Computed; `target`, `label`, and `customer_id`, which the API returns unconditionally;
+and `schedule.time1`/`time2` and `contactgroup.name`/`members`, whose mapping overwrites
+the model from the API regardless of plan. A wrong demotion costs a hard apply failure, so
+uncertainty resolves in favour of keeping Computed.
+
+**Mitigation for what remains:** to clear one of the still-Computed attributes, set it
+explicitly to its zero value rather than deleting the line.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
 
@@ -219,17 +269,26 @@ subsequent plan shows a permanent diff.
 
 ---
 
-## A-013 — REDIS host passwords are never read back from the API
+## A-013 — RESOLVED: REDIS host credentials are write-only
 
-**Assumption:** `hosts[*].password` is written but never mapped from API responses, and is
-restored from prior state on refresh.
+**Status:** resolved, not accepted. Superseded by `hosts[*].password_wo`.
 
-**Why:** Applying the "Read must never copy a credential into a regular attribute" rule
-consistently. NodePing returns these in plaintext like check passwords.
+**Original problem:** `hosts[*].password` was written but never mapped from API responses,
+so a host password changed outside OpenTofu was not detected as drift.
 
-**Trade-off, accepted:** a REDIS host password changed outside OpenTofu is not detected as
-drift. Host and port on the same entries *are* still refreshed, so structural drift
-surfaces normally.
+**Resolution:** `hosts[*].password_wo` and `hosts[*].password_wo_version` keep the
+credential out of state entirely, so there is nothing to drift. `WriteOnly` inside a
+`MapNestedAttribute` is supported in terraform-plugin-framework v1.19.0 — verified in the
+framework source (`map_nested_attribute.go:317-323`), not assumed — **provided the
+containing map attribute is not `Computed`**. Demoting `hosts` to plain `Optional` under
+A-007 is what made this legal; the two changes are coupled.
+
+Per-host conflict rules are enforced by a custom validator rather than
+`resourcevalidator.Conflicting`, which cannot express a path through a map.
+
+**Residual:** `hosts[*].password` remains for migration and is deprecated. It still writes
+to state in plaintext and is still never read back, so the original trade-off applies to
+anyone who has not migrated.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
 

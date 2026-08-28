@@ -361,7 +361,10 @@ func TestProviderConfigure_defaultTags(t *testing.T) {
 			want: []string{"team-devops", "production"},
 		},
 		{
-			name: "empty string tag is preserved verbatim",
+			// Empty tags are rejected at plan time by the default_tags
+			// validator. Configure itself stays permissive so it never
+			// second-guesses a value core has already validated.
+			name: "empty string tag reaches the client unchanged",
 			value: []tftypes.Value{
 				tftypes.NewValue(tftypes.String, ""),
 			},
@@ -414,6 +417,11 @@ func TestProviderConfigure_defaultTagsWithNullElementFails(t *testing.T) {
 	}
 }
 
+// TestProviderConfigure_tuningAttributes pins the defence-in-depth behaviour of
+// Configure. Out-of-range values are rejected at plan time by the attribute
+// validators and ValidateConfig, so they cannot reach Configure through core;
+// if one ever does, the client's coercion must still produce a usable client
+// rather than a panic or a zero rate limit.
 func TestProviderConfigure_tuningAttributes(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -444,7 +452,7 @@ func TestProviderConfigure_tuningAttributes(t *testing.T) {
 			},
 		},
 		{
-			name: "negative values fall back to client defaults",
+			name: "negative values are coerced to client defaults",
 			attrs: configAttrs{
 				"api_token":      "token",
 				"rate_limit":     -1.0,
@@ -454,7 +462,7 @@ func TestProviderConfigure_tuningAttributes(t *testing.T) {
 			},
 		},
 		{
-			name: "retry_wait_min greater than retry_wait_max is accepted",
+			name: "retry_wait_min greater than retry_wait_max still yields a client",
 			attrs: configAttrs{
 				"api_token":      "token",
 				"retry_wait_min": int64(90),

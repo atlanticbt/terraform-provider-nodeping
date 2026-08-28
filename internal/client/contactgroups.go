@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -69,18 +68,14 @@ func (c *Client) GetContactGroup(ctx context.Context, id string) (*ContactGroup,
 		path:   "/contactgroups/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "contact group", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get contact group: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get contact group", "contact group", id)
 	}
 
 	// A GET for a non-existent group can come back 200 with an empty document
 	// instead of 404. Treat a response with no ID as absent so Read removes the
 	// resource from state rather than writing an empty group.
-	if result.ID == "" {
-		return nil, &NotFoundError{ResourceType: "contact group", ResourceID: id}
+	if err := absentAsNotFound(result.ID == "", "contact group", id); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -116,11 +111,7 @@ func (c *Client) UpdateContactGroup(ctx context.Context, id string, req ContactG
 		body:   req,
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "contact group", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to update contact group: %w", err)
+		return nil, notFoundOrWrap(err, "failed to update contact group", "contact group", id)
 	}
 	return &result, nil
 }
@@ -139,11 +130,7 @@ func (c *Client) DeleteContactGroup(ctx context.Context, id string) error {
 		path:   "/contactgroups/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "contact group", ResourceID: id}
-		}
-		return fmt.Errorf("failed to delete contact group: %w", err)
+		return notFoundOrWrap(err, "failed to delete contact group", "contact group", id)
 	}
 
 	// ok:false with HTTP 200 means the group was already absent, which is a

@@ -134,8 +134,8 @@ func baseModel() CheckResourceModel {
 		Threshold:      types.Int64Value(5),
 		Sens:           types.Int64Value(2),
 		Mute:           types.BoolValue(false),
-		Dep:            types.StringUnknown(),
-		Description:    types.StringUnknown(),
+		Dep:            types.StringNull(),
+		Description:    types.StringNull(),
 		RunLocations:   types.ListUnknown(types.StringType),
 		HomeLoc:        types.StringUnknown(),
 		AutoDiag:       types.BoolValue(false),
@@ -143,34 +143,34 @@ func baseModel() CheckResourceModel {
 		State:          types.Int64Unknown(),
 		Created:        types.Int64Unknown(),
 		Modified:       types.Int64Unknown(),
-		ContentString:  types.StringUnknown(),
+		ContentString:  types.StringNull(),
 		Regex:          types.BoolUnknown(),
 		Invert:         types.BoolUnknown(),
 		Follow:         types.BoolUnknown(),
 		Method:         types.StringUnknown(),
 		StatusCode:     types.Int64Unknown(),
-		SendHeaders:    types.MapUnknown(types.StringType),
-		ReceiveHeaders: types.MapUnknown(types.StringType),
-		PostData:       types.StringUnknown(),
+		SendHeaders:    types.MapNull(types.StringType),
+		ReceiveHeaders: types.MapNull(types.StringType),
+		PostData:       types.StringNull(),
 		Port:           types.Int64Unknown(),
-		Username:       types.StringUnknown(),
-		Password:       types.StringUnknown(),
+		Username:       types.StringNull(),
+		Password:       types.StringNull(),
 		Secure:         types.StringUnknown(),
 		Verify:         types.BoolUnknown(),
 		IPv6:           types.BoolUnknown(),
 		DNSType:        types.StringUnknown(),
-		DNSToResolve:   types.StringUnknown(),
+		DNSToResolve:   types.StringNull(),
 		DNSSection:     types.StringUnknown(),
 		DNSRD:          types.BoolUnknown(),
 		Transport:      types.StringUnknown(),
 		WarningDays:    types.Int64Unknown(),
-		ServerName:     types.StringUnknown(),
-		Email:          types.StringUnknown(),
-		Database:       types.StringUnknown(),
-		Query:          types.StringUnknown(),
-		Namespace:      types.StringUnknown(),
-		SSHKey:         types.StringUnknown(),
-		ClientCert:     types.StringUnknown(),
+		ServerName:     types.StringNull(),
+		Email:          types.StringNull(),
+		Database:       types.StringNull(),
+		Query:          types.StringNull(),
+		Namespace:      types.StringNull(),
+		SSHKey:         types.StringNull(),
+		ClientCert:     types.StringNull(),
 		SNMPv:          types.StringUnknown(),
 		SNMPCom:        types.StringUnknown(),
 
@@ -178,18 +178,18 @@ func baseModel() CheckResourceModel {
 		PasswordWO:        types.StringNull(),
 		PasswordWOVersion: types.Int64Null(),
 
-		Data:          types.MapUnknown(types.StringType),
-		Fields:        types.MapUnknown(CheckFieldObjectType()),
-		Hosts:         types.MapUnknown(RedisHostObjectType()),
+		Data:          types.MapNull(types.StringType),
+		Fields:        types.MapNull(CheckFieldObjectType()),
+		Hosts:         types.MapNull(RedisHostObjectType()),
 		RedisType:     types.StringValue("standalone"),
-		SentinelName:  types.StringUnknown(),
+		SentinelName:  types.StringNull(),
 		CheckToken:    types.StringUnknown(),
 		OldResultFail: types.BoolUnknown(),
-		EDNS:          types.MapUnknown(types.StringType),
+		EDNS:          types.MapNull(types.StringType),
 		DoHDoT:        types.StringValue("doh"),
-		WhoisServer:   types.StringUnknown(),
-		RDAPUrl:       types.StringUnknown(),
-		Ignore:        types.StringUnknown(),
+		WhoisServer:   types.StringNull(),
+		RDAPUrl:       types.StringNull(),
+		Ignore:        types.StringNull(),
 		VerifyVolume:  types.BoolUnknown(),
 		VolumeMin:     types.Int64Unknown(),
 	}
@@ -1593,7 +1593,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	plan.Secure = types.StringValue("ssl")
 	plan.PostData = types.StringValue("a=b")
 
-	req := r.buildCreateRequest(ctx, &plan, types.StringNull(), &diags)
+	req := r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -1615,7 +1615,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 
 	plan.Enabled = types.BoolValue(true)
-	if req := r.buildCreateRequest(ctx, &plan, types.StringNull(), &diags); req.Enabled != "active" {
+	if req := r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags); req.Enabled != "active" {
 		t.Errorf("enabled = %q, want active", req.Enabled)
 	}
 }

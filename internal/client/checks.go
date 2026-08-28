@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -31,12 +30,19 @@ func (c *Client) GetCheck(ctx context.Context, id string) (*Check, error) {
 		path:   "/checks/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "check", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get check: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get check", "check", id)
 	}
+
+	// A check that does not exist comes back as 200 with an empty document on
+	// some deployments. Every real check carries an ID, a type and a target, so
+	// a document with none of the three describes nothing.
+	if err := absentAsNotFound(
+		result.ID == "" && result.Type == "" && result.Parameters.Target == "",
+		"check", id,
+	); err != nil {
+		return nil, err
+	}
+
 	return &result, nil
 }
 
@@ -83,11 +89,7 @@ func (c *Client) DeleteCheck(ctx context.Context, id string) error {
 		path:   "/checks/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "check", ResourceID: id}
-		}
-		return fmt.Errorf("failed to delete check: %w", err)
+		return notFoundOrWrap(err, "failed to delete check", "check", id)
 	}
 
 	// NodePing returns ok:false (with HTTP 200) when the check did not exist.

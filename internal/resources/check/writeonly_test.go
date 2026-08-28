@@ -104,7 +104,7 @@ func TestBuildCreateRequest_prefersWriteOnlyPassword(t *testing.T) {
 	plan := baseModel()
 	plan.Password = types.StringValue("legacy")
 
-	req := r.buildCreateRequest(ctx, &plan, types.StringValue("write-only"), &diags)
+	req := r.buildCreateRequest(ctx, &plan, types.StringValue("write-only"), nil, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -113,7 +113,7 @@ func TestBuildCreateRequest_prefersWriteOnlyPassword(t *testing.T) {
 	}
 
 	plan.Password = types.StringValue("legacy")
-	req = r.buildCreateRequest(ctx, &plan, types.StringNull(), &diags)
+	req = r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags)
 	if req.Password != "legacy" {
 		t.Errorf("the deprecated password must still be sent when password_wo is unset, got %q", req.Password)
 	}

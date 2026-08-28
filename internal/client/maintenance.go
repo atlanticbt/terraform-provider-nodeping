@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -261,18 +260,17 @@ func (c *Client) GetMaintenance(ctx context.Context, id string) (*Maintenance, e
 		path:   "/maintenance/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "maintenance", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get maintenance window: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get maintenance window", "maintenance", id)
 	}
 
 	// An empty body with a 200 is how NodePing reports "no such maintenance"
 	// on some deployments. Treat it as absent rather than returning a hollow
 	// record that would look like drift.
-	if result.Identifier() == "" && result.Name == "" && result.Duration == 0 {
-		return nil, &NotFoundError{ResourceType: "maintenance", ResourceID: id}
+	if err := absentAsNotFound(
+		result.Identifier() == "" && result.Name == "" && result.Duration == 0,
+		"maintenance", id,
+	); err != nil {
+		return nil, err
 	}
 
 	if result.Identifier() == "" {
@@ -354,11 +352,7 @@ func (c *Client) UpdateMaintenance(ctx context.Context, id string, req Maintenan
 		body:   req,
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "maintenance", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to update maintenance window: %w", err)
+		return nil, notFoundOrWrap(err, "failed to update maintenance window", "maintenance", id)
 	}
 
 	if result.Identifier() == "" {
@@ -381,11 +375,7 @@ func (c *Client) DeleteMaintenance(ctx context.Context, id string) error {
 		path:   "/maintenance/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "maintenance", ResourceID: id}
-		}
-		return fmt.Errorf("failed to delete maintenance window: %w", err)
+		return notFoundOrWrap(err, "failed to delete maintenance window", "maintenance", id)
 	}
 
 	return nil

@@ -112,6 +112,8 @@ func (r *ContactResource) Create(ctx context.Context, req resource.CreateRequest
 		"id": contact.ID,
 	})
 
+	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -154,6 +156,8 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -222,6 +226,12 @@ func (r *ContactResource) Update(ctx context.Context, req resource.UpdateRequest
 		"id": contact.ID,
 	})
 
+	// Update writes the identity too. Both members are immutable, so this
+	// re-states the same values -- but on a resource created before the core
+	// supported identity there is no stored identity yet, and the framework
+	// rejects an update that leaves it null.
+	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -255,30 +265,51 @@ func (r *ContactResource) Delete(ctx context.Context, req resource.DeleteRequest
 }
 
 func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	idParts := strings.Split(req.ID, ":")
-
 	var contactID string
 	var customerID string
 
-	if len(idParts) == 2 {
-		customerID = idParts[0]
-		contactID = idParts[1]
-	} else if len(idParts) == 1 {
-		contactID = idParts[0]
+	// An "identity" import block is handled first; anything else is the
+	// established string form, which must keep working unchanged.
+	if idFromIdentity, customerFromIdentity, ok := identityImportValues(ctx, req, &resp.Diagnostics); ok {
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if idFromIdentity == "" {
+			resp.Diagnostics.AddError(
+				"Invalid Import Identity",
+				"The 'id' attribute of the import identity must be a non-empty contact ID.",
+			)
+			return
+		}
+		contactID = idFromIdentity
+		customerID = customerFromIdentity
 	} else {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'contact_id' or 'customer_id:contact_id', got: %s", req.ID),
-		)
-		return
-	}
+		if resp.Diagnostics.HasError() {
+			return
+		}
 
-	if contactID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'contact_id' or 'customer_id:contact_id', got: %s", req.ID),
-		)
-		return
+		idParts := strings.Split(req.ID, ":")
+
+		if len(idParts) == 2 {
+			customerID = idParts[0]
+			contactID = idParts[1]
+		} else if len(idParts) == 1 {
+			contactID = idParts[0]
+		} else {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'contact_id' or 'customer_id:contact_id', got: %s", req.ID),
+			)
+			return
+		}
+
+		if contactID == "" {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'contact_id' or 'customer_id:contact_id', got: %s", req.ID),
+			)
+			return
+		}
 	}
 
 	tflog.Debug(ctx, "Importing contact", map[string]interface{}{
@@ -318,6 +349,8 @@ func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportSt
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

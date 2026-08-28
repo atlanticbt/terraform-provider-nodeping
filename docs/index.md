@@ -130,9 +130,10 @@ The resulting check will have tags: `["managed-by-terraform", "team-devops", "pr
 
 - `api_token` (String, Sensitive) - NodePing API token. Can also be set via `NODEPING_API_TOKEN` environment variable.
 - `customer_id` (String) - SubAccount customer ID for managing SubAccount resources. Can also be set via `NODEPING_CUSTOMER_ID` environment variable.
-- `api_url` (String) - NodePing API base URL. Defaults to `https://api.nodeping.com/api/1`. Can also be set via `NODEPING_API_URL` environment variable.
-- `rate_limit` (Number) - Maximum requests per second to the NodePing API. Defaults to `10`.
-- `max_retries` (Number) - Maximum number of retries for failed requests. Defaults to `3`.
-- `retry_wait_min` (Number) - Minimum wait time in seconds between retries. Defaults to `1`.
-- `retry_wait_max` (Number) - Maximum wait time in seconds between retries. Defaults to `30`.
+- `api_url` (String) - NodePing API base URL. Defaults to `https://api.nodeping.com/api/1`. Can also be set via the `NODEPING_API_URL` environment variable. **Must use `https`** unless the host is a loopback address (`localhost`, `127.0.0.0/8`, `::1`), which is permitted for local mock servers. A plaintext `http` endpoint would send the API token as HTTP basic auth in cleartext on every request. The same check is applied to the environment variable, which no attribute validator can see.
+- `default_tags` (List of String) - Tags merged into every check this provider instance manages. Empty strings are rejected — a zero-length tag cannot be searched or filtered in NodePing and is almost always an unset variable.
+- `rate_limit` (Number) - Maximum requests per second to the NodePing API. Must be greater than `0`. Defaults to `10`.
+- `max_retries` (Number) - Maximum number of retries for failed requests. Must be `0` or greater; `0` disables retries. Defaults to `3`.
+- `retry_wait_min` (Number) - Minimum wait time in seconds between retries. Must be `0` or greater, and must not exceed `retry_wait_max`. Defaults to `1`.
+- `retry_wait_max` (Number) - Maximum wait time in seconds between retries. Must be `0` or greater. Defaults to `30`.
 - `default_tags` (List of String) - Default tags to apply to all resources that support tags (e.g., checks). These tags are merged with resource-specific tags.

@@ -161,10 +161,16 @@ type CheckFieldModel struct {
 }
 
 // RedisHostModel is one entry of the "hosts" map used by REDIS checks.
+//
+// PasswordWO is write-only: like the check level password_wo it is delivered
+// from the configuration but never persisted, so it is always null in the plan
+// and in state. Create and Update must read it from req.Config.
 type RedisHostModel struct {
-	Host     types.String `tfsdk:"host"`
-	Port     types.Int64  `tfsdk:"port"`
-	Password types.String `tfsdk:"password"`
+	Host              types.String `tfsdk:"host"`
+	Port              types.Int64  `tfsdk:"port"`
+	Password          types.String `tfsdk:"password"`
+	PasswordWO        types.String `tfsdk:"password_wo"`
+	PasswordWOVersion types.Int64  `tfsdk:"password_wo_version"`
 }
 
 // checkFieldAttrTypes and redisHostAttrTypes mirror the nested attribute types
@@ -178,9 +184,11 @@ var checkFieldAttrTypes = map[string]attr.Type{
 }
 
 var redisHostAttrTypes = map[string]attr.Type{
-	"host":     types.StringType,
-	"port":     types.Int64Type,
-	"password": types.StringType,
+	"host":                types.StringType,
+	"port":                types.Int64Type,
+	"password":            types.StringType,
+	"password_wo":         types.StringType,
+	"password_wo_version": types.Int64Type,
 }
 
 // CheckFieldObjectType is the element type of the "fields" attribute.
@@ -533,12 +541,10 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"dep": schema.StringAttribute{
 				Description: "Check ID for notification dependency.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"description": schema.StringAttribute{
 				Description: "Description or notes for the check (max 1000 characters).",
 				Optional:    true,
-				Computed:    true,
 				Validators: []validator.String{
 					stringvalidator.LengthAtMost(1000),
 				},
@@ -597,7 +603,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"contentstring": schema.StringAttribute{
 				Description: "String to match in the response.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"regex": schema.BoolAttribute{
 				Description: "Treat contentstring as a regular expression.",
@@ -633,20 +638,17 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"sendheaders": schema.MapAttribute{
 				Description: "HTTP headers to send with the request.",
 				Optional:    true,
-				Computed:    true,
 				Sensitive:   true,
 				ElementType: types.StringType,
 			},
 			"receiveheaders": schema.MapAttribute{
 				Description: "Expected HTTP headers in the response.",
 				Optional:    true,
-				Computed:    true,
 				ElementType: types.StringType,
 			},
 			"postdata": schema.StringAttribute{
 				Description: "POST data for HTTPADV checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"port": schema.Int64Attribute{
 				Description: "Port number for the check.",
@@ -659,7 +661,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"username": schema.StringAttribute{
 				Description: "Username for authentication.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"password": schema.StringAttribute{
 				Description: "Password for authentication. Deprecated: this value is written to state in plaintext. " +
@@ -670,7 +671,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				DeprecationMessage: "password is stored in state in plaintext. Use password_wo together with " +
 					"password_wo_version, which is never written to state.",
 				Optional:  true,
-				Computed:  true,
 				Sensitive: true,
 			},
 			"password_wo": schema.StringAttribute{
@@ -722,7 +722,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"dnstoresolve": schema.StringAttribute{
 				Description: "FQDN to resolve in DNS checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"dnssection": schema.StringAttribute{
 				Description: "DNS reply section to check.",
@@ -756,37 +755,30 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"servername": schema.StringAttribute{
 				Description: "Server name for SNI in SSL checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"email": schema.StringAttribute{
 				Description: "Email address for SMTP checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"database": schema.StringAttribute{
 				Description: "Database name for database checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"query": schema.StringAttribute{
 				Description: "Query for database checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"namespace": schema.StringAttribute{
 				Description: "MongoDB collection namespace.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"sshkey": schema.StringAttribute{
 				Description: "SSH private key ID for SSH checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"clientcert": schema.StringAttribute{
 				Description: "Client certificate ID for HTTPADV/DOHDOT checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"snmpv": schema.StringAttribute{
 				Description: "SNMP version ('1' or '2c').",
@@ -811,7 +803,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 					"- `HTTPADV`: form data sent with the request\n" +
 					"- `WEBSOCKET`, `SPEC10DNS`, `SPEC10RDDS`: type specific settings",
 				Optional:    true,
-				Computed:    true,
 				ElementType: types.StringType,
 			},
 			"fields": schema.MapNestedAttribute{
@@ -820,7 +811,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				MarkdownDescription: "Result fields to parse and range check. Used by `HTTPPARSE`, `SNMP`, " +
 					"`MONGODB`, `MYSQL` and `PGSQL` checks. The map key is the field ID used in NodePing's results.",
 				Optional: true,
-				Computed: true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"name": schema.StringAttribute{
@@ -846,7 +836,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"hosts": schema.MapNestedAttribute{
 				Description: "REDIS hosts to connect to, keyed by an arbitrary identifier.",
 				Optional:    true,
-				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"host": schema.StringAttribute{
@@ -861,10 +850,34 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 							},
 						},
 						"password": schema.StringAttribute{
-							Description: "Password for the Redis node. NodePing stores this in plaintext; " +
-								"it is never read back from the API into state.",
+							Description: "Password for the Redis node. Deprecated: this value is written to " +
+								"state in plaintext. Use password_wo instead.",
+							MarkdownDescription: "Password for the Redis node.\n\n" +
+								"~> **Deprecated.** This value is stored in the state file in plaintext. " +
+								"Use `password_wo` (write-only) together with `password_wo_version` instead.",
+							DeprecationMessage: "hosts password is stored in state in plaintext. Use " +
+								"password_wo together with password_wo_version, which is never written to state.",
 							Optional:  true,
 							Sensitive: true,
+						},
+						"password_wo": schema.StringAttribute{
+							Description: "Write-only password for the Redis node. The value is sent to the " +
+								"NodePing API but never written to state or to a saved plan. Bump " +
+								"password_wo_version to re-send it.",
+							MarkdownDescription: "Write-only password for the Redis node. The value is sent to " +
+								"the NodePing API but never written to state or to a saved plan.\n\n" +
+								"Write-only values are invisible to the plan differ, so changing `password_wo` " +
+								"alone will not trigger an update. Increment `password_wo_version` whenever the " +
+								"password changes.\n\nConflicts with `password` on the same host.",
+							Optional:  true,
+							WriteOnly: true,
+							Sensitive: true,
+						},
+						"password_wo_version": schema.Int64Attribute{
+							Description: "Increment this value to re-send password_wo for this host to the " +
+								"NodePing API. Write-only values are not visible to the plan differ, so this " +
+								"is what makes a password change produce an update.",
+							Optional: true,
 						},
 					},
 				},
@@ -881,7 +894,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"sentinelname": schema.StringAttribute{
 				Description: "Redis Sentinel master name. Required when redistype is 'sentinel'.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"checktoken": schema.StringAttribute{
 				Description: "Token used by AGENT and PUSH checks to submit results. Generated by NodePing " +
@@ -900,7 +912,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"edns": schema.MapAttribute{
 				Description: "EDNS options for DOHDOT checks. Every key must be a positive integer option code.",
 				Optional:    true,
-				Computed:    true,
 				ElementType: types.StringType,
 				Validators: []validator.Map{
 					ednsKeysValidator{},
@@ -918,12 +929,10 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 			"whoisserver": schema.StringAttribute{
 				Description: "WHOIS server to query for WHOIS checks.",
 				Optional:    true,
-				Computed:    true,
 			},
 			"rdapurl": schema.StringAttribute{
 				Description: "RDAP service URL for RDAP checks.",
 				Optional:    true,
-				Computed:    true,
 				Validators: []validator.String{
 					urlValidator{},
 				},
@@ -935,7 +944,6 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 					"- `RBL`: comma separated list of blocklists to ignore\n" +
 					"- `SIP`: comma separated list of response codes to ignore",
 				Optional: true,
-				Computed: true,
 			},
 			"verifyvolume": schema.BoolAttribute{
 				Description: "Enable volume detection for AUDIO checks.",

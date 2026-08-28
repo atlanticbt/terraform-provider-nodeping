@@ -30,27 +30,21 @@ checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 
-signs:
-  - artifacts: checksum
-    signature: "${artifact}.sig"
-    output: true
-    cmd: gpg
-    args:
-      # -u pins the signing key. Without it gpg signs with whatever default
-      # secret key is in the runner keyring, silently using the wrong one if
-      # more than one is ever imported.
-      - "--batch"
-      - "--yes"
-      - "--local-user"
-      - "{{ .Env.GPG_FINGERPRINT }}"
-      - "--pinentry-mode"
-      - "loopback"
-      - "--passphrase"
-      - "{{ .Env.GPG_PASSPHRASE }}"
-      - "--detach-sign"
-      - "--output"
-      - "${signature}"
-      - "${artifact}"
+# No GPG signing block, deliberately.
+#
+# OpenTofu enforces GPG validation only for providers served from a self-hosted
+# *origin registry*. Filesystem, network, and OCI mirrors require no signature,
+# no SHA256SUMS, and no terraform-registry-manifest.json — and there is no way
+# to opt into enforcement for a mirror even if you wanted it.
+#
+# We publish through a network mirror, so a signature would be generated, stored,
+# and never checked by anything. Integrity is covered instead by the h1 hashes in
+# the mirror index (see tools/mirror-index), which OpenTofu does verify on
+# install and records in the consumer's dependency lock file.
+#
+# If this ever moves to a self-hosted origin registry, signing becomes mandatory:
+# restore a `signs:` block with `--local-user` pinned to an explicit fingerprint,
+# and add the registry manifest as an extra_files entry.
 
 release:
   # Bitbucket is not a goreleaser publish target. The pipeline runs with

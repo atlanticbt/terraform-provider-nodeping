@@ -7,7 +7,7 @@ All notable changes to this provider are documented here. Format follows
 ## [1.0.0] — 2026-08-27
 
 First Atlantic BT release. Completes API coverage, keeps credentials out of state, and
-brings test coverage from 11.3% to 94%.
+brings test coverage from 11.3% to 95.2%.
 
 Forked from `github.com/phizzl/terraform-provider-nodeping` at commit `8fdc0e1` (MPL-2.0).
 See [NOTICE.md](NOTICE.md) for attribution and provenance.
@@ -43,8 +43,7 @@ See [NOTICE.md](NOTICE.md) for attribution and provenance.
   attributes.
 - `Read` no longer maps the password NodePing returns into any regular attribute, so the
   API's plaintext cannot leak back into state.
-- REDIS `hosts[*].password` receives the same treatment, restored from prior state on
-  refresh.
+- REDIS host credentials get their own write-only path; see below.
 - The existing `password` attribute is deprecated but functional. The two are mutually
   exclusive, enforced by a config validator.
 
@@ -69,6 +68,77 @@ Limitations.
 
 **`docs/assumptions.md`** — fourteen recorded decisions and accepted risks.
 
+**Resource identity** (OpenTofu 1.12)
+
+All seven resources implement `resource.ResourceWithIdentity`, enabling
+`import { identity = { ... } }` blocks instead of string-parsing import IDs. Identity is
+`id` + `customer_id` on the six scoped resources and `id` alone on `nodeping_subaccount`,
+which *is* the account. Safe in both directions: a pre-1.12 core never calls the identity
+RPCs, and the string import forms (`ID` and `CUSTOMERID:ID`) continue to work unchanged.
+
+Identity is set in Create, Read, **Update**, and ImportState. Update is not optional — the
+framework raises a hard "Missing Resource Identity After Update" error if the identity is
+fully null after an update, which is reachable for a resource created on a pre-identity
+core and then applied with `-refresh=false`.
+
+**Provider configuration validation**
+
+- `api_url` must use `https` unless the host is loopback. A plaintext endpoint sends the
+  API token as HTTP basic auth in cleartext on every request; there was previously no
+  guardrail at all. Checked both on the attribute and again in `Configure`, because
+  `NODEPING_API_URL` is invisible to attribute validators and the environment variable is
+  where the footgun actually lives. No `allow_insecure_url` escape hatch — a config flag
+  survives copy-paste into production, and an SSH tunnel to `127.0.0.1` covers the
+  legitimate cases without leaving a permanent artifact.
+- `rate_limit` must be greater than zero; `max_retries`, `retry_wait_min`, and
+  `retry_wait_max` must be non-negative; `retry_wait_min` must not exceed `retry_wait_max`.
+  Previously any value `<= 0` was silently coerced to a default, so `rate_limit = -1` gave
+  you 10 req/s with no warning.
+- `default_tags` rejects empty strings. A zero-length tag cannot be searched or filtered in
+  NodePing and is almost always an unset variable.
+
+**Write-only REDIS host credentials**
+
+`hosts[*].password_wo` and `hosts[*].password_wo_version` keep REDIS host passwords out of
+state entirely, resolving what was previously an accepted drift-detection gap. `WriteOnly`
+inside a `MapNestedAttribute` is supported in terraform-plugin-framework v1.19.0 — verified
+in the framework source, not assumed — but only when the containing map attribute is not
+`Computed`, so this depended on the `hosts` demotion below. `hosts[*].password` remains for
+migration and is deprecated.
+
+**Documentation drift check**
+
+A test walks every resource and data source schema and fails the build when an attribute
+exists in a schema but is not mentioned in its documentation page. It found three real gaps
+on its first run (`email` on the check resource, `dep` on both check data sources). The
+pages remain hand-written rather than generated, because tfplugindocs would discard the
+prose they carry; migrating with templates that preserve it is tracked in the roadmap.
+
+**Ad-hoc maintenance escape hatch**
+
+`scripts/nodeping-adhoc-maintenance.sh` performs the API call imperatively, driven from a
+`terraform_data` resource with a `local-exec` provisioner (recipe in the maintenance
+resource docs). Deliberately outside provider state, which is what makes it safe — OpenTofu
+never tries to reconcile the window, so the recreate loop that makes ad-hoc unmanageable
+cannot occur. The script validates and bounds every input, rejects check IDs containing
+anything but alphanumerics and hyphens rather than escaping them, requires an `https`
+endpoint outside loopback, and reads the token from the environment so it never reaches
+`ps` output.
+
+**Provider mirror publishing**
+
+- `tools/mirror-index` — generates the OpenTofu network mirror index documents with `h1:`
+  hashes, computed with the same dirhash algorithm OpenTofu uses. Kept as a separate Go
+  module so the build tooling's dependencies stay out of the provider's dependency graph.
+  Uploading archives alone produces a non-functional mirror; without the index documents
+  OpenTofu cannot enumerate or resolve any version, and without hashes it installs with no
+  verification at all.
+- Release pipeline publishes to the mirror over Bitbucket OIDC — no AWS access keys stored
+  as repository variables. Archives upload before the index that references them, so the
+  mirror never advertises a version that cannot be downloaded.
+- `docs/mirror.md` — the remaining AWS setup (bucket, CloudFront, OIDC trust policy scoped
+  to this repository, IAM permissions scoped to the one prefix) and consumer configuration.
+
 ### Changed
 
 - `.gitignore` broadened to cover plan files (binary and JSON), state including backups and
@@ -78,9 +148,44 @@ Limitations.
 - `CheckCreateRequest.Tags` is now `*[]string`. A plain slice with `omitempty` dropped an
   empty array, making "remove the last tag" a silent no-op.
 - `terraform-plugin-testing` v1.16.0 added as a real dependency.
+- **GPG signing removed from the release pipeline.** OpenTofu enforces signature validation
+  only for self-hosted *origin registries*; filesystem, network, and OCI mirrors require no
+  signature, no `SHA256SUMS`, and no registry manifest. We publish through a network mirror,
+  so a signature would have been generated, stored, and never verified — while adding key
+  rotation and a `GPG_PASSPHRASE` variable to the operational surface. Integrity comes from
+  the `h1:` hashes instead, which OpenTofu does check on install and records in the
+  consumer's lock file. The reasoning and the path back are documented in `.goreleaser.yml`
+  and `docs/mirror.md`.
+
+- **Attribute removal now produces a diff for 24 check attributes.** `Optional + Computed`
+  was over-applied. It is only required where NodePing supplies a value the practitioner
+  never set; for attributes the API merely echoes back, plain `Optional` works and removal
+  diffs correctly. Demoted: `description`, `contentstring`, `sendheaders`, `receiveheaders`,
+  `postdata`, `data`, `fields`, `hosts`, `edns`, `username`, `email`, `query`, `database`,
+  `namespace`, `whoisserver`, `rdapurl`, `ignore`, `servername`, `sshkey`, `clientcert`,
+  `sentinelname`, `dnstoresolve`, `dep`, and the deprecated `password`. Attributes with
+  documented server defaults, schema defaults, or unconditional API responses keep
+  `Computed` — a wrong demotion is a hard apply failure on every apply, so uncertainty
+  resolved in favour of keeping it. See A-007 for the kept-with-reason list.
 
 ### Fixed
 
+- **A 200 response carrying `{"error": ...}` could delete a resource from state and
+  recreate live infrastructure.** NodePing returns errors with HTTP 200 on some endpoints.
+  `nodeping_contactgroup`, `nodeping_notificationprofile`, `nodeping_maintenance`, and
+  `nodeping_subaccount` checked only whether the decoded document was empty — and an error
+  document decodes to an empty struct. A transient `permission denied` or `rate limit
+  exceeded` was therefore reported as "resource absent", so OpenTofu would drop it from
+  state and rebuild it on the next apply. Not-found classification is now conservative: a
+  short fragment list, skipped entirely for retryable statuses, with explicit tests
+  asserting that unrecognised error messages surface as real errors.
+- **`nodeping_check` and `nodeping_contact` did not tolerate NodePing's non-standard
+  responses at all**, so a `{}`-with-200 was written into state as an empty object rather
+  than removing the resource. Both layers of tolerance now live in the shared client, so
+  every resource inherits identical behaviour: one error-in-200 detector, one not-found
+  classifier, replacing sixteen duplicated blocks.
+- **`ListChecks` and the other list methods turned a 200-carried error into an empty
+  collection**, which is indistinguishable from an empty account. They now return the error.
 - **Provider configuration rejected valid tokens sourced from another resource.**
   `Configure` checked only `IsNull()`, so an attribute whose value was not yet known —
   `api_token` wired from another resource's output, for example — was read as an empty
@@ -105,21 +210,29 @@ Limitations.
 ### Known limitations
 
 - **Nothing in this release has been verified against the live NodePing API.** Acceptance
-  tests exist but have never run — that requires a token for a dedicated test subaccount.
-  This is the gate on production use. See A-010.
-- Ad-hoc maintenance windows cannot be managed. NodePing auto-deletes them after the run,
-  which would produce an infinite recreate loop that repeatedly disables monitoring.
-  Blocked structurally, not just documented. See A-003.
-- Optional + Computed attributes do not diff on removal; set them to a zero value instead.
-  See A-007.
-- Subaccount `contactname` and `email` are never refreshed — NodePing does not return them.
-  See A-005.
-- REDIS host password drift is not detected, the cost of never reading a credential back
-  into state. See A-013.
-- `checktoken` regeneration is unsupported; NodePing's documentation is self-contradictory
-  on this attribute. See A-011.
-- `nodeping_check` and `nodeping_contact` do not yet share the newer resources' handling of
-  NodePing's `{}`-with-HTTP-200 responses. Tracked in the roadmap.
+  tests exist for every resource but have never run — that requires a token for a dedicated
+  test subaccount. This is the gate on production use, and it is the most significant item
+  on this list by a wide margin. See A-010.
+- **Ad-hoc maintenance cannot be a resource.** NodePing auto-deletes the record after the
+  run, which would produce an infinite recreate loop that repeatedly disables monitoring.
+  Blocked structurally rather than documented, with an imperative escape hatch via
+  `terraform_data` and `scripts/nodeping-adhoc-maintenance.sh`. Not expected to change:
+  the declarative answer would be Terraform's `action` blocks, which OpenTofu has signalled
+  it may deliberately not adopt. See A-003.
+- **Some attributes still do not diff on removal.** Narrowed substantially this release —
+  24 check attributes were demoted to plain `Optional` and now behave correctly. What
+  remains is attributes where NodePing supplies a value the practitioner never set; for
+  those, set the zero value explicitly rather than deleting the line. See A-007 for the
+  list and the reason each was kept.
+- **Subaccount `contactname` and `email` are never refreshed** — NodePing does not return
+  them, so drift in those fields is invisible. See A-005.
+- **`checktoken` regeneration is unsupported.** NodePing's documentation is
+  self-contradictory on this attribute; the correct shape is a separate resource, not an
+  attribute. See A-011.
+- **The provider mirror does not exist yet.** The publishing pipeline and index generator
+  are complete, but the S3 bucket, CloudFront distribution, and OIDC role are not
+  provisioned. Until they are, the only install path is `make install` to a local
+  filesystem mirror. See `docs/mirror.md`.
 
 ---
 

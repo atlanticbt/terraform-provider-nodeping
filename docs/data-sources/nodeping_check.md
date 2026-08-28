@@ -50,3 +50,5 @@ output "check_enabled" {
 - `modified` - Last modification timestamp (milliseconds).
 - `description` - Description of the check.
 - `tags` - List of tags.
+- `dep` - ID of the check this one depends on for notification suppression. See
+  [notification dependency](../notification_dependency.md).

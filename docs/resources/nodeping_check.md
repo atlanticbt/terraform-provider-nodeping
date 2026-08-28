@@ -224,6 +224,7 @@ resource "nodeping_check" "service" {
   whenever the password changes.
 - `password` - (Optional, Sensitive, **Deprecated**) Authentication password. This value is stored in
   state in plaintext. Use `password_wo` instead. Conflicts with `password_wo`.
+- `email` - (Optional) Email address used by `SMTP` checks when verifying mail delivery.
 - `sshkey` - (Optional) SSH private key ID.
 - `clientcert` - (Optional) Client certificate ID.
 

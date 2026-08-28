@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -227,17 +226,13 @@ func (c *Client) getAccountByID(ctx context.Context, id string) (*Account, error
 		path:   "/accounts/" + url.PathEscape(id),
 	}, &account)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "account", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get account: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get account", "account", id)
 	}
 
 	// A deleted account can answer 200 with an empty body while the deletion
 	// queue drains. Treat a document with no ID as absent.
-	if account.ID == "" {
-		return nil, &NotFoundError{ResourceType: "account", ResourceID: id}
+	if err := absentAsNotFound(account.ID == "", "account", id); err != nil {
+		return nil, err
 	}
 
 	return &account, nil
@@ -350,11 +345,7 @@ func (c *Client) UpdateAccount(ctx context.Context, id string, req AccountUpdate
 		body:   req,
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "account", ResourceID: id}
-		}
-		return fmt.Errorf("failed to update account: %w", err)
+		return notFoundOrWrap(err, "failed to update account", "account", id)
 	}
 	return nil
 }
@@ -384,11 +375,7 @@ func (c *Client) DeleteAccount(ctx context.Context, id string) error {
 		customerID: id,
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "account", ResourceID: id}
-		}
-		return fmt.Errorf("failed to delete account: %w", err)
+		return notFoundOrWrap(err, "failed to delete account", "account", id)
 	}
 
 	return nil

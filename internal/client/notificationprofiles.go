@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -115,17 +114,13 @@ func (c *Client) GetNotificationProfile(ctx context.Context, id string) (*Notifi
 		path:   "/notificationprofiles/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "notification profile", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get notification profile: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get notification profile", "notification profile", id)
 	}
 
 	// A profile that does not exist is reported by some NodePing endpoints as a
 	// 200 with an empty body rather than a 404.
-	if result.ID == "" {
-		return nil, &NotFoundError{ResourceType: "notification profile", ResourceID: id}
+	if err := absentAsNotFound(result.ID == "", "notification profile", id); err != nil {
+		return nil, err
 	}
 
 	return &result, nil
@@ -161,11 +156,7 @@ func (c *Client) UpdateNotificationProfile(ctx context.Context, id string, req N
 		body:   req,
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "notification profile", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to update notification profile: %w", err)
+		return nil, notFoundOrWrap(err, "failed to update notification profile", "notification profile", id)
 	}
 	return &result, nil
 }
@@ -184,11 +175,7 @@ func (c *Client) DeleteNotificationProfile(ctx context.Context, id string) error
 		path:   "/notificationprofiles/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "notification profile", ResourceID: id}
-		}
-		return fmt.Errorf("failed to delete notification profile: %w", err)
+		return notFoundOrWrap(err, "failed to delete notification profile", "notification profile", id)
 	}
 
 	return nil

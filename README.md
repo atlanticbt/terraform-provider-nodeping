@@ -206,6 +206,22 @@ tofu import nodeping_check.client 201203232048C76FH:CHECK-ID   # subaccount
 The subaccount form persists `customer_id` into state, so subsequent plans keep addressing
 the same account. Mirror the value in your configuration to avoid a replacement diff.
 
+All resources also support **resource identity**, so an `import` block can address them
+structurally instead of by parsing a colon-delimited string:
+
+```hcl
+import {
+  to = nodeping_check.client
+  identity = {
+    id          = "CHECK-ID"
+    customer_id = "201203232048C76FH"
+  }
+}
+```
+
+Identity is `id` + `customer_id` on every resource except `nodeping_subaccount`, which uses
+`id` alone. Both import styles work; identity is additive.
+
 ## Development
 
 ```bash

@@ -3,7 +3,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -309,34 +308,21 @@ func (c *Client) GetSchedule(ctx context.Context, id string) (*Schedule, error) 
 		path:   "/schedules/" + url.PathEscape(id),
 	}, &raw)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "schedule", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get schedule: %w", err)
-	}
-
-	if len(raw) == 0 {
-		return nil, &NotFoundError{ResourceType: "schedule", ResourceID: id}
-	}
-
-	if apiMessage, ok := scheduleErrorMessage(raw); ok {
-		if isNotFoundMessage(apiMessage) {
-			return nil, &NotFoundError{ResourceType: "schedule", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get schedule: %w", &APIError{StatusCode: http.StatusOK, Message: apiMessage})
+		return nil, notFoundOrWrap(err, "failed to get schedule", "schedule", id)
 	}
 
 	var schedule Schedule
-	if err := json.Unmarshal(raw, &schedule); err != nil {
-		return nil, fmt.Errorf("failed to get schedule: %w", err)
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &schedule); err != nil {
+			return nil, fmt.Errorf("failed to get schedule: %w", err)
+		}
 	}
 
-	// An empty body with no days is how the API reports "no such schedule" on
-	// some deployments; treat it the same as a 404 so Read can drop the
-	// resource instead of writing an empty schedule to state.
-	if len(schedule.Data) == 0 {
-		return nil, &NotFoundError{ResourceType: "schedule", ResourceID: id}
+	// A schedule with no days is how the API reports "no such schedule" on some
+	// deployments; treat it the same as a 404 so Read can drop the resource
+	// instead of writing an empty schedule to state.
+	if err := absentAsNotFound(len(schedule.Data) == 0, "schedule", id); err != nil {
+		return nil, err
 	}
 
 	if schedule.ID == "" {
@@ -374,9 +360,6 @@ func (c *Client) PutSchedule(ctx context.Context, id string, req SchedulePutRequ
 	schedule := Schedule{ID: id}
 
 	if len(raw) > 0 {
-		if apiMessage, ok := scheduleErrorMessage(raw); ok {
-			return nil, fmt.Errorf("failed to save schedule: %w", &APIError{StatusCode: http.StatusOK, Message: apiMessage})
-		}
 		if err := json.Unmarshal(raw, &schedule); err != nil {
 			return nil, fmt.Errorf("failed to save schedule: %w", err)
 		}
@@ -401,41 +384,8 @@ func (c *Client) DeleteSchedule(ctx context.Context, id string) error {
 		path:   "/schedules/" + url.PathEscape(id),
 	}, &raw)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "schedule", ResourceID: id}
-		}
-		return fmt.Errorf("failed to delete schedule: %w", err)
-	}
-
-	if len(raw) > 0 {
-		if apiMessage, ok := scheduleErrorMessage(raw); ok {
-			if isNotFoundMessage(apiMessage) {
-				return &NotFoundError{ResourceType: "schedule", ResourceID: id}
-			}
-			return fmt.Errorf("failed to delete schedule: %w", &APIError{StatusCode: http.StatusOK, Message: apiMessage})
-		}
+		return notFoundOrWrap(err, "failed to delete schedule", "schedule", id)
 	}
 
 	return nil
-}
-
-// scheduleErrorMessage extracts NodePing's `{"error": "..."}` body, which it
-// sometimes returns with HTTP 200.
-func scheduleErrorMessage(raw json.RawMessage) (string, bool) {
-	var errResp ErrorResponse
-	if err := json.Unmarshal(raw, &errResp); err != nil {
-		return "", false
-	}
-	if errResp.Error == "" {
-		return "", false
-	}
-	return truncateMessage(errResp.Error, maxErrorMessageLength), true
-}
-
-func isNotFoundMessage(message string) bool {
-	lowered := strings.ToLower(message)
-	return strings.Contains(lowered, "not found") ||
-		strings.Contains(lowered, "does not exist") ||
-		strings.Contains(lowered, "no such")
 }
