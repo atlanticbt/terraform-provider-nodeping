@@ -18,11 +18,20 @@ Atlantic BT maintains this provider for internal use. It is a fork of
 | Provider address | `atlanticbt.com/abt/nodeping` |
 | Requires | OpenTofu >= 1.12 |
 | Distribution | ABT private provider mirror (not a public registry) |
-| Resources | `nodeping_check`, `nodeping_contact` |
-| Data sources | `nodeping_check`, `nodeping_checks`, `nodeping_contact`, `nodeping_contacts` |
+| Test coverage | 94%+ statements |
+| API coverage | 7 of 7 NodePing CRUD resources |
 
-Contact groups, notification profiles, schedules, maintenance windows, and subaccount
-provisioning are not implemented yet. See [docs/roadmap.md](docs/roadmap.md).
+**Resources:** `nodeping_check` · `nodeping_contact` · `nodeping_contactgroup` ·
+`nodeping_schedule` · `nodeping_notificationprofile` · `nodeping_maintenance` ·
+`nodeping_subaccount`
+
+**Data sources:** singular and plural forms of each of the above, plus `nodeping_account`
+/ `nodeping_accounts`.
+
+> **Not yet verified against the live NodePing API.** Every resource is unit-tested, but
+> acceptance tests have never been executed — that needs a token for a dedicated test
+> subaccount. See [A-010](docs/assumptions.md) for exactly what remains unverified before
+> this should carry production monitoring.
 
 ## Installation
 
@@ -152,29 +161,40 @@ destroy can still reach them.
 ### Credentials on checks
 
 Check types that authenticate (`FTP`, `IMAP4`, `MYSQL`, `POP3`, `SMTP`, `SSH`) take a
-password.
+password. Use `password_wo`, which is write-only — the value reaches NodePing but is
+**never written to state or to a saved plan file**.
 
 ```hcl
+ephemeral "aws_secretsmanager_secret_version" "db" {
+  secret_id = "nodeping/db-monitor"
+}
+
 resource "nodeping_check" "db" {
   label    = "prod mysql"
   type     = "MYSQL"
   target   = "db.example.com"
   username = "monitoring"
-  password = var.db_monitor_password
+
+  password_wo         = ephemeral.aws_secretsmanager_secret_version.db.secret_string
+  password_wo_version = 1 # bump to rotate
 }
 ```
 
-> **The password is currently stored in your state file in plaintext.** `password` is
-> marked sensitive, which redacts it from CLI output but does **not** protect state.
->
-> Two things follow. Enable [OpenTofu state
-> encryption](https://opentofu.org/docs/language/state/encryption/) and restrict access to
-> the state bucket. And use a least-privilege, monitoring-only credential for every
-> authenticated check — NodePing itself stores and returns check passwords in plaintext
-> through its API, so the credential is exposed on their side regardless of what we do.
->
-> Converting `password` to a write-only argument, which keeps the value out of state
-> entirely, is the next planned change here. See [docs/roadmap.md](docs/roadmap.md).
+Write-only values are invisible to diffing, so OpenTofu cannot detect that the secret
+changed. Incrementing `password_wo_version` is what triggers an update.
+
+Pairing it with an `ephemeral` block matters: a regular `data` source stores its result in
+state, so reading the secret that way would put the plaintext in state even though the
+check attribute is write-only. Ephemeral reads are not persisted, and OpenTofu rejects an
+ephemeral value assigned to a non-write-only attribute — so the mistake is a plan-time
+error rather than a silent leak.
+
+The deprecated `password` attribute still works but **does** land in state in plaintext.
+The two are mutually exclusive.
+
+Note that NodePing stores and returns check passwords in plaintext through its own API
+regardless. Write-only protects your state; it cannot protect their storage. Use a
+least-privilege, monitoring-only credential for every authenticated check.
 
 ### Importing
 

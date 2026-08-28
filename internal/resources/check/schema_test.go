@@ -34,7 +34,7 @@ func TestSchemaCoversEveryCheckType(t *testing.T) {
 func TestSchemaAttributeFlags(t *testing.T) {
 	s := CheckSchema()
 
-	sensitive := []string{"password", "snmpcom", "sendheaders"}
+	sensitive := []string{"password", "password_wo", "snmpcom", "sendheaders", "checktoken"}
 	for _, name := range sensitive {
 		if !s.Attributes[name].IsSensitive() {
 			t.Errorf("%s must be marked sensitive", name)
@@ -42,8 +42,15 @@ func TestSchemaAttributeFlags(t *testing.T) {
 	}
 
 	// Every configurable attribute must also be computed so that a value the
-	// API supplies on its own does not read back as a diff.
-	notComputed := map[string]bool{"type": true}
+	// API supplies on its own does not read back as a diff. Write-only
+	// attributes are the exception: the framework forbids Computed on them,
+	// and password_wo_version is a pure client side trigger that the API has
+	// no opinion about.
+	notComputed := map[string]bool{
+		"type":                true,
+		"password_wo":         true,
+		"password_wo_version": true,
+	}
 	for name, attribute := range s.Attributes {
 		if !attribute.IsOptional() || notComputed[name] {
 			continue

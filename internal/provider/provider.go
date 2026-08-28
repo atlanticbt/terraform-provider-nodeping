@@ -14,12 +14,27 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/account"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/accounts"
 	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/check"
 	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/checks"
 	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contact"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contactgroup"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contactgroups"
 	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contacts"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/maintenance"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/maintenances"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofile"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofiles"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/schedule"
+	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/schedules"
 	checkresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/check"
 	contactresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/contact"
+	contactgroupresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/contactgroup"
+	maintenanceresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/maintenance"
+	notificationprofileresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/notificationprofile"
+	scheduleresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/schedule"
+	subaccountresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/subaccount"
 )
 
 var _ provider.Provider = &NodePingProvider{}
@@ -165,6 +180,41 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 		return
 	}
 
+	// Unknown values reach Configure when an attribute is derived from another
+	// resource's not-yet-applied output. Treating them as empty would either
+	// raise a misleading "missing token" error or silently fall back to an
+	// environment variable the practitioner did not intend to use.
+	if config.APIToken.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("api_token"),
+			"Unknown NodePing API Token",
+			"The provider cannot create the NodePing API client as there is an unknown configuration value for the NodePing API token. "+
+				"Either apply the source of the value first, set the value statically in the configuration, or use the NODEPING_API_TOKEN environment variable.",
+		)
+	}
+
+	if config.CustomerID.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("customer_id"),
+			"Unknown NodePing Customer ID",
+			"The provider cannot create the NodePing API client as there is an unknown configuration value for the NodePing customer ID. "+
+				"Either apply the source of the value first, set the value statically in the configuration, or use the NODEPING_CUSTOMER_ID environment variable.",
+		)
+	}
+
+	if config.APIURL.IsUnknown() {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("api_url"),
+			"Unknown NodePing API URL",
+			"The provider cannot create the NodePing API client as there is an unknown configuration value for the NodePing API URL. "+
+				"Either apply the source of the value first, set the value statically in the configuration, or use the NODEPING_API_URL environment variable.",
+		)
+	}
+
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	apiToken := os.Getenv("NODEPING_API_TOKEN")
 	if apiToken == "" {
 		apiToken = os.Getenv("NODEPING_API_KEY")
@@ -195,27 +245,27 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 	}
 
 	var rateLimit float64 = client.DefaultRateLimit
-	if !config.RateLimit.IsNull() {
+	if !config.RateLimit.IsNull() && !config.RateLimit.IsUnknown() {
 		rateLimit = config.RateLimit.ValueFloat64()
 	}
 
 	var maxRetries int = client.DefaultMaxRetries
-	if !config.MaxRetries.IsNull() {
+	if !config.MaxRetries.IsNull() && !config.MaxRetries.IsUnknown() {
 		maxRetries = int(config.MaxRetries.ValueInt64())
 	}
 
 	var retryWaitMin time.Duration = client.DefaultRetryMinWait
-	if !config.RetryWaitMin.IsNull() {
+	if !config.RetryWaitMin.IsNull() && !config.RetryWaitMin.IsUnknown() {
 		retryWaitMin = time.Duration(config.RetryWaitMin.ValueInt64()) * time.Second
 	}
 
 	var retryWaitMax time.Duration = client.DefaultRetryMaxWait
-	if !config.RetryWaitMax.IsNull() {
+	if !config.RetryWaitMax.IsNull() && !config.RetryWaitMax.IsUnknown() {
 		retryWaitMax = time.Duration(config.RetryWaitMax.ValueInt64()) * time.Second
 	}
 
 	var defaultTags []string
-	if !config.DefaultTags.IsNull() {
+	if !config.DefaultTags.IsNull() && !config.DefaultTags.IsUnknown() {
 		resp.Diagnostics.Append(config.DefaultTags.ElementsAs(ctx, &defaultTags, false)...)
 		if resp.Diagnostics.HasError() {
 			return
@@ -249,16 +299,31 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 
 func (p *NodePingProvider) Resources(ctx context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
-		contactresource.NewContactResource,
 		checkresource.NewCheckResource,
+		contactresource.NewContactResource,
+		contactgroupresource.NewContactGroupResource,
+		maintenanceresource.NewMaintenanceResource,
+		notificationprofileresource.NewNotificationProfileResource,
+		scheduleresource.NewScheduleResource,
+		subaccountresource.NewSubaccountResource,
 	}
 }
 
 func (p *NodePingProvider) DataSources(ctx context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
-		contact.NewContactDataSource,
-		contacts.NewContactsDataSource,
+		account.NewAccountDataSource,
+		accounts.NewAccountsDataSource,
 		check.NewCheckDataSource,
 		checks.NewChecksDataSource,
+		contact.NewContactDataSource,
+		contacts.NewContactsDataSource,
+		contactgroup.NewContactGroupDataSource,
+		contactgroups.NewContactGroupsDataSource,
+		maintenance.NewMaintenanceDataSource,
+		maintenances.NewMaintenancesDataSource,
+		notificationprofile.NewNotificationProfileDataSource,
+		notificationprofiles.NewNotificationProfilesDataSource,
+		schedule.NewScheduleDataSource,
+		schedules.NewSchedulesDataSource,
 	}
 }
