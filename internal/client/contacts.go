@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -31,12 +30,16 @@ func (c *Client) GetContact(ctx context.Context, id string) (*Contact, error) {
 		path:   "/contacts/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return nil, &NotFoundError{ResourceType: "contact", ResourceID: id}
-		}
-		return nil, fmt.Errorf("failed to get contact: %w", err)
+		return nil, notFoundOrWrap(err, "failed to get contact", "contact", id)
 	}
+
+	// An absent contact is reported as 200 with an empty document rather than a
+	// 404. NodePing assigns every contact an `_id`, so a response without one is
+	// not a contact.
+	if err := absentAsNotFound(result.ID == "", "contact", id); err != nil {
+		return nil, err
+	}
+
 	return &result, nil
 }
 
@@ -83,11 +86,7 @@ func (c *Client) DeleteContact(ctx context.Context, id string) error {
 		path:   "/contacts/" + url.PathEscape(id),
 	}, &result)
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
-			return &NotFoundError{ResourceType: "contact", ResourceID: id}
-		}
-		return fmt.Errorf("failed to delete contact: %w", err)
+		return notFoundOrWrap(err, "failed to delete contact", "contact", id)
 	}
 
 	// ok:false with HTTP 200 means the contact was already absent, which is a

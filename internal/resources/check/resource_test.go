@@ -27,8 +27,36 @@ func nullRaw(ctx context.Context) tftypes.Value {
 	return tftypes.NewValue(CheckSchema().Type().TerraformType(ctx), nil)
 }
 
+// withTypedNulls fills in the element type of any collection attribute left at
+// its Go zero value. A zero types.Map/Set/List carries no element type, which
+// the framework rejects when writing it back into a plan or state.
+func withTypedNulls(m CheckResourceModel) CheckResourceModel {
+	if m.Tags.IsNull() && m.Tags.ElementType(context.Background()) == nil {
+		m.Tags = types.SetNull(types.StringType)
+	}
+	for _, f := range []*types.List{&m.RunLocations} {
+		if f.IsNull() && f.ElementType(context.Background()) == nil {
+			*f = types.ListNull(types.StringType)
+		}
+	}
+	stringMaps := []*types.Map{&m.SendHeaders, &m.ReceiveHeaders, &m.Data, &m.EDNS}
+	for _, f := range stringMaps {
+		if f.IsNull() && f.ElementType(context.Background()) == nil {
+			*f = types.MapNull(types.StringType)
+		}
+	}
+	if m.Fields.IsNull() && m.Fields.ElementType(context.Background()) == nil {
+		m.Fields = types.MapNull(CheckFieldObjectType())
+	}
+	if m.Hosts.IsNull() && m.Hosts.ElementType(context.Background()) == nil {
+		m.Hosts = types.MapNull(RedisHostObjectType())
+	}
+	return m
+}
+
 func newPlan(t *testing.T, ctx context.Context, m CheckResourceModel) tfsdk.Plan {
 	t.Helper()
+	m = withTypedNulls(m)
 	p := tfsdk.Plan{Schema: CheckSchema(), Raw: nullRaw(ctx)}
 	if diags := p.Set(ctx, &m); diags.HasError() {
 		t.Fatalf("failed to build plan: %v", diags)
@@ -42,8 +70,35 @@ func newConfig(t *testing.T, ctx context.Context, m CheckResourceModel) tfsdk.Co
 	return tfsdk.Config{Schema: CheckSchema(), Raw: p.Raw}
 }
 
+// withoutWriteOnly strips every write-only attribute, which is what Terraform
+// core does to the plan and the state before they reach the provider.
+func withoutWriteOnly(m CheckResourceModel) CheckResourceModel {
+	m.PasswordWO = types.StringNull()
+	return m
+}
+
+// newCreateRequest mirrors what the framework hands to Create: the configured
+// values in Config, the same values minus the write-only ones in Plan.
+func newCreateRequest(t *testing.T, ctx context.Context, m CheckResourceModel) resource.CreateRequest {
+	t.Helper()
+	return resource.CreateRequest{
+		Plan:   newPlan(t, ctx, withoutWriteOnly(m)),
+		Config: newConfig(t, ctx, m),
+	}
+}
+
+func newUpdateRequest(t *testing.T, ctx context.Context, plan, state CheckResourceModel) resource.UpdateRequest {
+	t.Helper()
+	return resource.UpdateRequest{
+		Plan:   newPlan(t, ctx, withoutWriteOnly(plan)),
+		Config: newConfig(t, ctx, plan),
+		State:  newState(t, ctx, withoutWriteOnly(state)),
+	}
+}
+
 func newState(t *testing.T, ctx context.Context, m CheckResourceModel) tfsdk.State {
 	t.Helper()
+	m = withTypedNulls(m)
 	s := tfsdk.State{Schema: CheckSchema(), Raw: nullRaw(ctx)}
 	if diags := s.Set(ctx, &m); diags.HasError() {
 		t.Fatalf("failed to build state: %v", diags)
@@ -79,8 +134,8 @@ func baseModel() CheckResourceModel {
 		Threshold:      types.Int64Value(5),
 		Sens:           types.Int64Value(2),
 		Mute:           types.BoolValue(false),
-		Dep:            types.StringUnknown(),
-		Description:    types.StringUnknown(),
+		Dep:            types.StringNull(),
+		Description:    types.StringNull(),
 		RunLocations:   types.ListUnknown(types.StringType),
 		HomeLoc:        types.StringUnknown(),
 		AutoDiag:       types.BoolValue(false),
@@ -88,36 +143,55 @@ func baseModel() CheckResourceModel {
 		State:          types.Int64Unknown(),
 		Created:        types.Int64Unknown(),
 		Modified:       types.Int64Unknown(),
-		ContentString:  types.StringUnknown(),
+		ContentString:  types.StringNull(),
 		Regex:          types.BoolUnknown(),
 		Invert:         types.BoolUnknown(),
 		Follow:         types.BoolUnknown(),
 		Method:         types.StringUnknown(),
 		StatusCode:     types.Int64Unknown(),
-		SendHeaders:    types.MapUnknown(types.StringType),
-		ReceiveHeaders: types.MapUnknown(types.StringType),
-		PostData:       types.StringUnknown(),
+		SendHeaders:    types.MapNull(types.StringType),
+		ReceiveHeaders: types.MapNull(types.StringType),
+		PostData:       types.StringNull(),
 		Port:           types.Int64Unknown(),
-		Username:       types.StringUnknown(),
-		Password:       types.StringUnknown(),
+		Username:       types.StringNull(),
+		Password:       types.StringNull(),
 		Secure:         types.StringUnknown(),
 		Verify:         types.BoolUnknown(),
 		IPv6:           types.BoolUnknown(),
 		DNSType:        types.StringUnknown(),
-		DNSToResolve:   types.StringUnknown(),
+		DNSToResolve:   types.StringNull(),
 		DNSSection:     types.StringUnknown(),
 		DNSRD:          types.BoolUnknown(),
 		Transport:      types.StringUnknown(),
 		WarningDays:    types.Int64Unknown(),
-		ServerName:     types.StringUnknown(),
-		Email:          types.StringUnknown(),
-		Database:       types.StringUnknown(),
-		Query:          types.StringUnknown(),
-		Namespace:      types.StringUnknown(),
-		SSHKey:         types.StringUnknown(),
-		ClientCert:     types.StringUnknown(),
+		ServerName:     types.StringNull(),
+		Email:          types.StringNull(),
+		Database:       types.StringNull(),
+		Query:          types.StringNull(),
+		Namespace:      types.StringNull(),
+		SSHKey:         types.StringNull(),
+		ClientCert:     types.StringNull(),
 		SNMPv:          types.StringUnknown(),
 		SNMPCom:        types.StringUnknown(),
+
+		// Write-only attributes are null in the plan by construction.
+		PasswordWO:        types.StringNull(),
+		PasswordWOVersion: types.Int64Null(),
+
+		Data:          types.MapNull(types.StringType),
+		Fields:        types.MapNull(CheckFieldObjectType()),
+		Hosts:         types.MapNull(RedisHostObjectType()),
+		RedisType:     types.StringValue("standalone"),
+		SentinelName:  types.StringNull(),
+		CheckToken:    types.StringUnknown(),
+		OldResultFail: types.BoolUnknown(),
+		EDNS:          types.MapNull(types.StringType),
+		DoHDoT:        types.StringValue("doh"),
+		WhoisServer:   types.StringNull(),
+		RDAPUrl:       types.StringNull(),
+		Ignore:        types.StringNull(),
+		VerifyVolume:  types.BoolUnknown(),
+		VolumeMin:     types.Int64Unknown(),
 	}
 }
 
@@ -203,6 +277,12 @@ func (m *mockAPI) checkFromBody(id string, body map[string]interface{}) map[stri
 		"username", "secure", "verify", "ipv6", "dnstype", "dnstoresolve", "dnssection",
 		"dnsrd", "transport", "warningdays", "servername", "email", "database", "query",
 		"namespace", "sshkey", "clientcert", "snmpv", "snmpcom",
+		// NodePing echoes the password back in plaintext; the mock does the
+		// same so the read path can be tested for leaks.
+		"password",
+		"data", "fields", "hosts", "redistype", "sentinelname", "checktoken",
+		"oldresultfail", "edns", "dohdot", "whoisserver", "rdapurl", "ignore",
+		"verifyvolume", "volumemin",
 	} {
 		if v, ok := body[k]; ok {
 			params[k] = v
@@ -795,7 +875,7 @@ func TestCreate_PreservesPasswordAndNormalisedValues(t *testing.T) {
 	plan.Method = types.StringValue("POST")
 
 	resp := &resource.CreateResponse{State: emptyState(ctx)}
-	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, plan)}, resp)
+	r.Create(ctx, newCreateRequest(t, ctx, plan), resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", resp.Diagnostics)
 	}
@@ -841,7 +921,7 @@ func TestCreate_ContentStringPreservedSymmetrically(t *testing.T) {
 	plan.ContentString = types.StringValue("hello")
 
 	createResp := &resource.CreateResponse{State: emptyState(ctx)}
-	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, plan)}, createResp)
+	r.Create(ctx, newCreateRequest(t, ctx, plan), createResp)
 	if createResp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", createResp.Diagnostics)
 	}
@@ -856,10 +936,7 @@ func TestCreate_ContentStringPreservedSymmetrically(t *testing.T) {
 	updatePlan.Modified = types.Int64Unknown()
 
 	updateResp := &resource.UpdateResponse{State: emptyState(ctx)}
-	r.Update(ctx, resource.UpdateRequest{
-		Plan:  newPlan(t, ctx, updatePlan),
-		State: newState(t, ctx, state),
-	}, updateResp)
+	r.Update(ctx, newUpdateRequest(t, ctx, updatePlan, state), updateResp)
 	if updateResp.Diagnostics.HasError() {
 		t.Fatalf("update failed: %v", updateResp.Diagnostics)
 	}
@@ -896,7 +973,7 @@ func TestCreate_NotificationsKeepPlanOrderAndDuplicates(t *testing.T) {
 	}
 
 	resp := &resource.CreateResponse{State: emptyState(ctx)}
-	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, plan)}, resp)
+	r.Create(ctx, newCreateRequest(t, ctx, plan), resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", resp.Diagnostics)
 	}
@@ -1158,7 +1235,7 @@ func TestSubaccountRequestsAreScoped(t *testing.T) {
 	plan.CustomerID = types.StringValue("SUB-9")
 
 	resp := &resource.CreateResponse{State: emptyState(ctx)}
-	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, plan)}, resp)
+	r.Create(ctx, newCreateRequest(t, ctx, plan), resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", resp.Diagnostics)
 	}
@@ -1367,7 +1444,7 @@ func TestCreate_SendsMergedTagsSorted(t *testing.T) {
 	plan.Tags = mustSet(t, ctx, "b", "a")
 
 	resp := &resource.CreateResponse{State: emptyState(ctx)}
-	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, plan)}, resp)
+	r.Create(ctx, newCreateRequest(t, ctx, plan), resp)
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("create failed: %v", resp.Diagnostics)
 	}
@@ -1516,7 +1593,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	plan.Secure = types.StringValue("ssl")
 	plan.PostData = types.StringValue("a=b")
 
-	req := r.buildCreateRequest(ctx, &plan, &diags)
+	req := r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -1538,7 +1615,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	}
 
 	plan.Enabled = types.BoolValue(true)
-	if req := r.buildCreateRequest(ctx, &plan, &diags); req.Enabled != "active" {
+	if req := r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags); req.Enabled != "active" {
 		t.Errorf("enabled = %q, want active", req.Enabled)
 	}
 }
@@ -1561,7 +1638,7 @@ func TestAPIErrorsSurfaceAsDiagnostics(t *testing.T) {
 		api.notFound = true
 		r := api.resource()
 		resp := &resource.CreateResponse{State: emptyState(ctx)}
-		r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, baseModel())}, resp)
+		r.Create(ctx, newCreateRequest(t, ctx, baseModel()), resp)
 		if !resp.Diagnostics.HasError() {
 			t.Error("expected a create error")
 		}
@@ -1575,10 +1652,7 @@ func TestAPIErrorsSurfaceAsDiagnostics(t *testing.T) {
 		api.notFound = true
 		r := api.resource()
 		resp := &resource.UpdateResponse{State: emptyState(ctx)}
-		r.Update(ctx, resource.UpdateRequest{
-			Plan:  newPlan(t, ctx, baseModel()),
-			State: newState(t, ctx, state),
-		}, resp)
+		r.Update(ctx, newUpdateRequest(t, ctx, baseModel(), state), resp)
 		if !resp.Diagnostics.HasError() {
 			t.Error("expected an update error")
 		}

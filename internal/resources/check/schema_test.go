@@ -34,18 +34,40 @@ func TestSchemaCoversEveryCheckType(t *testing.T) {
 func TestSchemaAttributeFlags(t *testing.T) {
 	s := CheckSchema()
 
-	sensitive := []string{"password", "snmpcom", "sendheaders"}
+	sensitive := []string{"password", "password_wo", "snmpcom", "sendheaders", "checktoken"}
 	for _, name := range sensitive {
 		if !s.Attributes[name].IsSensitive() {
 			t.Errorf("%s must be marked sensitive", name)
 		}
 	}
 
-	// Every configurable attribute must also be computed so that a value the
-	// API supplies on its own does not read back as a diff.
-	notComputed := map[string]bool{"type": true}
+	// An attribute is Optional + Computed only when NodePing supplies a value
+	// the practitioner never set; otherwise the framework substitutes prior
+	// state when the attribute is deleted from configuration and the removal
+	// never produces a diff. Everything listed here is pure user supplied
+	// content that the API only ever echoes back, so it stays Optional-only.
+	for name := range optionalOnlyAttributes {
+		attribute, ok := s.Attributes[name]
+		if !ok {
+			t.Errorf("%s is no longer a schema attribute", name)
+			continue
+		}
+		if !attribute.IsOptional() {
+			t.Errorf("%s must stay Optional", name)
+		}
+		if attribute.IsComputed() {
+			t.Errorf("%s must not be Computed: removing it from configuration would produce no diff", name)
+		}
+	}
+
+	// Everything else that is configurable must be Computed, so that a value
+	// the API supplies on its own does not read back as a diff. Write-only
+	// attributes are the exception: the framework forbids Computed on them, and
+	// password_wo_version is a pure client side trigger the API has no opinion
+	// about.
+	writeOnlyPair := map[string]bool{"password_wo": true, "password_wo_version": true}
 	for name, attribute := range s.Attributes {
-		if !attribute.IsOptional() || notComputed[name] {
+		if !attribute.IsOptional() || optionalOnlyAttributes[name] || writeOnlyPair[name] {
 			continue
 		}
 		if !attribute.IsComputed() {

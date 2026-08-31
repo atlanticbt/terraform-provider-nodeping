@@ -69,3 +69,5 @@ output "disabled_checks" {
   - `interval` - Check interval in minutes.
   - `state` - Current state: `0` (failing) or `1` (passing).
   - `tags` - List of tags.
+  - `dep` - ID of the check this one depends on for notification suppression. See
+    [notification dependency](../notification_dependency.md).

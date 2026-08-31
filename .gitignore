@@ -17,18 +17,54 @@ go.work.sum
 dist/
 terraform-provider-nodeping
 sbom.json
+# Compiled helpers under tools/ -- `go build` in those directories drops a
+# binary named after its module, which is easy to stage by accident.
+tools/*/mirror-index
+tools/**/*.bin
 
-# OpenTofu / Terraform state and plans
-# plan.json is listed explicitly: a committed plan file was the source of a
-# third-party data leak in the upstream repository. See NOTICE.md.
+# OpenTofu / Terraform state, plans, and variable files
+#
+# These patterns are deliberately broad. A committed plan file was the source of
+# a third-party data leak in the upstream repository (see NOTICE.md), so state
+# and plan artifacts are excluded by name, by extension, and by directory.
+#
+# State and plan files contain resource attribute values in cleartext, including
+# any credential a provider wrote to state. Never commit one, and never attach
+# one to a ticket.
+
+# Plans (binary and JSON forms)
 plan.json
+plan.tfplan
 *.tfplan
+*.tfplan.json
+tfplan
 tfplan*
+*.plan.json
+
+# State (including backups and lock metadata)
 *.tfstate
 *.tfstate.*
+*.tfstate.backup
+.terraform.tfstate.lock.info
+terraform.tfstate.d/
+
+# Variable files — routinely hold secrets
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!*.tfvars.tftpl
+
+# Working directories and CLI config
 .terraform/
 .terraform.lock.hcl
+.terraformrc
+terraform.rc
+.tofurc
+tofu.rc
 crash.log
+crash.*.log
+
+# Override files (local-only by convention)
 override.tf
 override.tf.json
 *_override.tf

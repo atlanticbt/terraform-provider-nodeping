@@ -384,6 +384,14 @@ func (c *Client) executeRequest(ctx context.Context, opts requestOptions, result
 		return c.handleErrorResponse(resp.StatusCode, resp.Header, respBody)
 	}
 
+	// NodePing reports failures with `{"error": "..."}` under HTTP 200 as often
+	// as it uses a 4xx (docs/assumptions.md A-002). Detecting that here means
+	// every endpoint gets the same treatment, and callers only ever have to
+	// reason about *APIError.
+	if message, ok := errorMessageFromBody(respBody); ok {
+		return &APIError{StatusCode: resp.StatusCode, Message: message}
+	}
+
 	if result != nil && len(respBody) > 0 {
 		if err := json.Unmarshal(respBody, result); err != nil {
 			return fmt.Errorf("failed to unmarshal response: %w", err)
@@ -393,12 +401,25 @@ func (c *Client) executeRequest(ctx context.Context, opts requestOptions, result
 	return nil
 }
 
-func (c *Client) handleErrorResponse(statusCode int, header http.Header, body []byte) error {
-	message := ""
+// errorMessageFromBody extracts NodePing's `{"error": "..."}` payload. It is the
+// single detector for an error carried in an otherwise successful response.
+func errorMessageFromBody(body []byte) (string, bool) {
+	if len(body) == 0 {
+		return "", false
+	}
 	var errResp ErrorResponse
-	if err := json.Unmarshal(body, &errResp); err == nil && errResp.Error != "" {
-		message = errResp.Error
-	} else {
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		return "", false
+	}
+	if errResp.Error == "" {
+		return "", false
+	}
+	return truncateMessage(errResp.Error, maxErrorMessageLength), true
+}
+
+func (c *Client) handleErrorResponse(statusCode int, header http.Header, body []byte) error {
+	message, ok := errorMessageFromBody(body)
+	if !ok {
 		message = truncateMessage(string(body), maxErrorMessageLength)
 	}
 
@@ -481,6 +502,34 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 	}
 
 	return time.Duration(backoff)
+}
+
+// notFoundOrWrap normalises the error from a single-resource request.
+//
+// A not-found signal — a 404, or a NodePing error body that says the object is
+// gone, whatever status carried it — becomes a *NotFoundError so callers can
+// keep matching with errors.As. Everything else is wrapped with operation as
+// context and surfaced unchanged.
+func notFoundOrWrap(err error, operation, resourceType, id string) error {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.IsNotFound() {
+		return &NotFoundError{ResourceType: resourceType, ResourceID: id}
+	}
+	return fmt.Errorf("%s: %w", operation, err)
+}
+
+// absentAsNotFound turns "the response decoded cleanly but the document is
+// empty" into a *NotFoundError.
+//
+// NodePing answers a GET for a missing resource with HTTP 200 and an empty
+// object rather than a 404, so without this the resource would write a hollow
+// record to state instead of being removed. What counts as empty is
+// resource-specific, so each caller passes its own predicate result.
+func absentAsNotFound(absent bool, resourceType, id string) error {
+	if absent {
+		return &NotFoundError{ResourceType: resourceType, ResourceID: id}
+	}
+	return nil
 }
 
 // validateResourceID rejects IDs that would cause the request to target the

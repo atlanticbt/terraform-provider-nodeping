@@ -10,10 +10,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -21,11 +23,12 @@ import (
 )
 
 var (
-	_ resource.Resource                   = &CheckResource{}
-	_ resource.ResourceWithConfigure      = &CheckResource{}
-	_ resource.ResourceWithImportState    = &CheckResource{}
-	_ resource.ResourceWithModifyPlan     = &CheckResource{}
-	_ resource.ResourceWithValidateConfig = &CheckResource{}
+	_ resource.Resource                     = &CheckResource{}
+	_ resource.ResourceWithConfigure        = &CheckResource{}
+	_ resource.ResourceWithImportState      = &CheckResource{}
+	_ resource.ResourceWithModifyPlan       = &CheckResource{}
+	_ resource.ResourceWithValidateConfig   = &CheckResource{}
+	_ resource.ResourceWithConfigValidators = &CheckResource{}
 )
 
 type CheckResource struct {
@@ -85,7 +88,15 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"target": plan.Target.ValueString(),
 	})
 
-	createReq := r.buildCreateRequest(ctx, &plan, &resp.Diagnostics)
+	// Write-only attributes are always null in req.Plan; the configured value
+	// only exists in req.Config.
+	passwordWO := writeOnlyPassword(ctx, req.Config, &resp.Diagnostics)
+	hostPasswordsWO := writeOnlyHostPasswords(ctx, req.Config, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	createReq := r.buildCreateRequest(ctx, &plan, passwordWO, hostPasswordsWO, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -107,6 +118,8 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 	tflog.Debug(ctx, "Created check", map[string]interface{}{
 		"id": check.ID,
 	})
+
+	setIdentity(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
 }
@@ -144,6 +157,8 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
+	setIdentity(ctx, resp.Identity, newState.ID, newState.CustomerID, &resp.Diagnostics)
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, newState)...)
 }
 
@@ -161,7 +176,16 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		"id": state.ID.ValueString(),
 	})
 
-	createReq := r.buildCreateRequest(ctx, &plan, &resp.Diagnostics)
+	// Write-only attributes are always null in req.Plan and req.State; the
+	// configured value only exists in req.Config. A bump of
+	// password_wo_version is what caused this update to be planned at all.
+	passwordWO := writeOnlyPassword(ctx, req.Config, &resp.Diagnostics)
+	hostPasswordsWO := writeOnlyHostPasswords(ctx, req.Config, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	createReq := r.buildCreateRequest(ctx, &plan, passwordWO, hostPasswordsWO, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -185,6 +209,12 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	tflog.Debug(ctx, "Updated check", map[string]interface{}{
 		"id": check.ID,
 	})
+
+	// Update writes the identity too. Both members are immutable, so this
+	// re-states the same values -- but on a resource created before the core
+	// supported identity there is no stored identity yet, and the framework
+	// rejects an update that leaves it null.
+	setIdentity(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
 }
@@ -219,31 +249,52 @@ func (r *CheckResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	idParts := strings.Split(req.ID, ":")
-
 	var checkID string
 	var customerID string
 
-	switch len(idParts) {
-	case 1:
-		checkID = idParts[0]
-	case 2:
-		customerID = idParts[0]
-		checkID = idParts[1]
-	default:
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
-		)
-		return
-	}
+	// An "identity" import block is handled first; anything else is the
+	// established string form, which must keep working unchanged.
+	if idFromIdentity, customerFromIdentity, ok := identityImportValues(ctx, req, &resp.Diagnostics); ok {
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if idFromIdentity == "" {
+			resp.Diagnostics.AddError(
+				"Invalid Import Identity",
+				"The 'id' attribute of the import identity must be a non-empty check ID.",
+			)
+			return
+		}
+		checkID = idFromIdentity
+		customerID = customerFromIdentity
+	} else {
+		if resp.Diagnostics.HasError() {
+			return
+		}
 
-	if checkID == "" {
-		resp.Diagnostics.AddError(
-			"Invalid Import ID",
-			fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
-		)
-		return
+		idParts := strings.Split(req.ID, ":")
+
+		switch len(idParts) {
+		case 1:
+			checkID = idParts[0]
+		case 2:
+			customerID = idParts[0]
+			checkID = idParts[1]
+		default:
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
+			)
+			return
+		}
+
+		if checkID == "" {
+			resp.Diagnostics.AddError(
+				"Invalid Import ID",
+				fmt.Sprintf("Expected import ID in format 'check_id' or 'customer_id:check_id', got: %s", req.ID),
+			)
+			return
+		}
 	}
 
 	tflog.Debug(ctx, "Importing check", map[string]interface{}{
@@ -272,6 +323,8 @@ func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStat
 	if customerID != "" {
 		state.CustomerID = types.StringValue(customerID)
 	}
+
+	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
@@ -325,6 +378,55 @@ func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("tags"), tagsSet)...)
 }
 
+// writeOnlyPassword reads password_wo out of the configuration. Write-only
+// attributes are stripped from the plan and the state by Terraform core, so
+// req.Plan and req.State would both yield a null value here.
+func writeOnlyPassword(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) types.String {
+	var password types.String
+	diags.Append(config.GetAttribute(ctx, path.Root("password_wo"), &password)...)
+	return password
+}
+
+// writeOnlyHostPasswords reads hosts[*].password_wo out of the configuration,
+// keyed by the same host identifier the practitioner used. As with the check
+// level password_wo, the value exists only in req.Config: Terraform core strips
+// write-only attributes from both the plan and the state, so reading them from
+// req.Plan would silently yield nulls.
+func writeOnlyHostPasswords(ctx context.Context, config tfsdk.Config, diags *diag.Diagnostics) map[string]types.String {
+	var hosts types.Map
+	diags.Append(config.GetAttribute(ctx, path.Root("hosts"), &hosts)...)
+	if diags.HasError() || !isSet(hosts) {
+		return nil
+	}
+
+	configHosts := make(map[string]RedisHostModel)
+	diags.Append(hosts.ElementsAs(ctx, &configHosts, false)...)
+	if diags.HasError() {
+		return nil
+	}
+
+	passwords := make(map[string]types.String, len(configHosts))
+	for key, h := range configHosts {
+		if isSet(h.PasswordWO) {
+			passwords[key] = h.PasswordWO
+		}
+	}
+	if len(passwords) == 0 {
+		return nil
+	}
+	return passwords
+}
+
+// ConfigValidators declares the mutually exclusive credential attributes.
+func (r *CheckResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.Conflicting(
+			path.MatchRoot("password"),
+			path.MatchRoot("password_wo"),
+		),
+	}
+}
+
 // ValidateConfig performs cross-attribute validation that a per-attribute
 // validator cannot express.
 func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
@@ -333,6 +435,29 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// Redis Sentinel needs the master name; the API rejects the check without
+	// it. This is checked independently of the check type so that a typo in
+	// redistype still produces the more specific message below.
+	if isSet(config.RedisType) && config.RedisType.ValueString() == "sentinel" && !isSet(config.SentinelName) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("sentinelname"),
+			"Missing Required Attribute",
+			"sentinelname is required when redistype is \"sentinel\".",
+		)
+	}
+
+	// A version without a value cannot do anything, and silently ignoring it
+	// would look like a password rotation that never happened.
+	if isSet(config.PasswordWOVersion) && !isSet(config.PasswordWO) {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("password_wo_version"),
+			"Missing Required Attribute",
+			"password_wo_version has no effect without password_wo.",
+		)
+	}
+
+	validateHostCredentials(ctx, config.Hosts, &resp.Diagnostics)
 
 	if !isSet(config.Type) {
 		return
@@ -375,7 +500,51 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 		"SSL, WHOIS, RDAP, SMTP, IMAP4, POP3, DOHDOT and SPEC10RDDS")
 }
 
-func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResourceModel, diags *diag.Diagnostics) client.CheckCreateRequest {
+// validateHostCredentials applies the check level credential rules to every
+// REDIS host entry. resourcevalidator.Conflicting cannot express a path through
+// a map, so the same two rules are enforced here.
+func validateHostCredentials(ctx context.Context, hosts types.Map, diags *diag.Diagnostics) {
+	if !isSet(hosts) {
+		return
+	}
+
+	configHosts := make(map[string]RedisHostModel)
+	diags.Append(hosts.ElementsAs(ctx, &configHosts, false)...)
+	if diags.HasError() {
+		return
+	}
+
+	// Map iteration order is randomised; sort so repeated runs report the same
+	// diagnostics in the same order.
+	keys := make([]string, 0, len(configHosts))
+	for key := range configHosts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	for _, key := range keys {
+		h := configHosts[key]
+		entry := path.Root("hosts").AtMapKey(key)
+
+		if isSet(h.Password) && isSet(h.PasswordWO) {
+			diags.AddAttributeError(
+				entry.AtName("password_wo"),
+				"Invalid Attribute Combination",
+				fmt.Sprintf("hosts[%q] sets both password and password_wo. Only one may be configured.", key),
+			)
+		}
+
+		if isSet(h.PasswordWOVersion) && !isSet(h.PasswordWO) {
+			diags.AddAttributeError(
+				entry.AtName("password_wo_version"),
+				"Missing Required Attribute",
+				fmt.Sprintf("hosts[%q] sets password_wo_version, which has no effect without password_wo.", key),
+			)
+		}
+	}
+}
+
+func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResourceModel, passwordWO types.String, hostPasswordsWO map[string]types.String, diags *diag.Diagnostics) client.CheckCreateRequest {
 	req := client.CheckCreateRequest{
 		Type: plan.Type.ValueString(),
 	}
@@ -498,7 +667,11 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.Username = plan.Username.ValueString()
 	}
 
-	if isSet(plan.Password) {
+	// password_wo wins over the deprecated password. The two are mutually
+	// exclusive at config validation time, so at most one of these fires.
+	if isSet(passwordWO) {
+		req.Password = passwordWO.ValueString()
+	} else if isSet(plan.Password) {
 		req.Password = plan.Password.ValueString()
 	}
 
@@ -574,6 +747,99 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.SNMPCom = plan.SNMPCom.ValueString()
 	}
 
+	if isSet(plan.Data) {
+		data := make(map[string]string)
+		diags.Append(plan.Data.ElementsAs(ctx, &data, false)...)
+		req.Data = data
+	}
+
+	if isSet(plan.Fields) {
+		fields := make(map[string]CheckFieldModel)
+		diags.Append(plan.Fields.ElementsAs(ctx, &fields, false)...)
+		if len(fields) > 0 {
+			req.Fields = make(map[string]client.CheckField, len(fields))
+			for key, f := range fields {
+				field := client.CheckField{Name: f.Name.ValueString()}
+				if isSet(f.Min) {
+					field.Min = f.Min.ValueInt64()
+				}
+				if isSet(f.Max) {
+					field.Max = f.Max.ValueInt64()
+				}
+				if isSet(f.Match) {
+					field.Match = f.Match.ValueString()
+				}
+				req.Fields[key] = field
+			}
+		}
+	}
+
+	if isSet(plan.Hosts) {
+		hosts := make(map[string]RedisHostModel)
+		diags.Append(plan.Hosts.ElementsAs(ctx, &hosts, false)...)
+		if len(hosts) > 0 {
+			req.Hosts = make(map[string]client.RedisHost, len(hosts))
+			for key, h := range hosts {
+				// password_wo wins over the deprecated password, exactly as it
+				// does for the check level credential. The two are mutually
+				// exclusive per host at config validation time.
+				password := h.Password.ValueString()
+				if wo, ok := hostPasswordsWO[key]; ok && isSet(wo) {
+					password = wo.ValueString()
+				}
+				req.Hosts[key] = client.RedisHost{
+					Host:     h.Host.ValueString(),
+					Port:     int(h.Port.ValueInt64()),
+					Password: password,
+				}
+			}
+		}
+	}
+
+	// redistype and dohdot carry schema defaults, so they are set for every
+	// check type. Only send them where NodePing understands them.
+	if isSet(plan.RedisType) && plan.Type.ValueString() == "REDIS" {
+		req.RedisType = plan.RedisType.ValueString()
+	}
+
+	if isSet(plan.SentinelName) {
+		req.SentinelName = plan.SentinelName.ValueString()
+	}
+
+	if isSet(plan.DoHDoT) && plan.Type.ValueString() == "DOHDOT" {
+		req.DoHDoT = plan.DoHDoT.ValueString()
+	}
+
+	if isSet(plan.OldResultFail) {
+		req.OldResultFail = plan.OldResultFail.ValueBool()
+	}
+
+	if isSet(plan.EDNS) {
+		edns := make(map[string]string)
+		diags.Append(plan.EDNS.ElementsAs(ctx, &edns, false)...)
+		req.EDNS = edns
+	}
+
+	if isSet(plan.WhoisServer) {
+		req.WhoisServer = plan.WhoisServer.ValueString()
+	}
+
+	if isSet(plan.RDAPUrl) {
+		req.RDAPUrl = plan.RDAPUrl.ValueString()
+	}
+
+	if isSet(plan.Ignore) {
+		req.Ignore = plan.Ignore.ValueString()
+	}
+
+	if isSet(plan.VerifyVolume) {
+		req.VerifyVolume = plan.VerifyVolume.ValueBool()
+	}
+
+	if isSet(plan.VolumeMin) {
+		req.VolumeMin = plan.VolumeMin.ValueInt64()
+	}
+
 	for _, n := range plan.Notifications {
 		notif := map[string]interface{}{
 			n.ContactID.ValueString(): map[string]interface{}{
@@ -621,10 +887,17 @@ func mapForRead(ctx context.Context, check *client.Check, prior *CheckResourceMo
 		return model
 	}
 
-	// The API never returns the password, so keep whatever we already know.
-	if !isSet(model.Password) && isSet(prior.Password) {
+	// The API's plaintext password is never mapped, so the only value the
+	// deprecated password attribute can hold is the one already in state.
+	// password_wo stays null by construction.
+	if isSet(prior.Password) {
 		model.Password = prior.Password
 	}
+	if isSet(prior.PasswordWOVersion) {
+		model.PasswordWOVersion = prior.PasswordWOVersion
+	}
+
+	model.Hosts = restoreHostPasswords(ctx, prior.Hosts, model.Hosts, diags)
 
 	// Ignore purely cosmetic normalisation of the target.
 	if isSet(prior.Target) && normalizeURL(prior.Target.ValueString()) == normalizeURL(model.Target.ValueString()) {
@@ -646,6 +919,14 @@ func mapForApply(ctx context.Context, check *client.Check, plan *CheckResourceMo
 
 	result := *plan
 	fillUnknownAttributes(&result, apiModel)
+
+	// Terraform core strips write-only values from the plan before it reaches
+	// the provider, and the framework strips them again from the response. Doing
+	// it here as well costs nothing and keeps the credential out of state even
+	// when the plan was produced by something that does not honour write-only
+	// (opentofu#3964, mocked providers).
+	result.PasswordWO = types.StringNull()
+	result.Hosts = clearHostWriteOnlyPasswords(ctx, result.Hosts, diags)
 
 	// The check ID is only ever produced by the API.
 	if !isSet(result.ID) {
@@ -844,7 +1125,13 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 	model.Method = stringOrNull(p.Method)
 	model.PostData = stringOrNull(p.PostData)
 	model.Username = stringOrNull(p.Username)
-	model.Password = stringOrNull(p.Password)
+	// NodePing returns the password in plaintext on every check response. It is
+	// deliberately not mapped: copying it here would put the credential into
+	// state, which is exactly what password_wo exists to prevent. mapForRead
+	// carries the prior value forward for the deprecated password attribute.
+	model.Password = types.StringNull()
+	model.PasswordWO = types.StringNull()
+	model.PasswordWOVersion = types.Int64Null()
 	model.DNSType = stringOrNull(p.DNSType)
 	model.DNSToResolve = stringOrNull(p.DNSToResolve)
 	model.DNSSection = stringOrNull(p.DNSSection)
@@ -883,7 +1170,216 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 		model.ReceiveHeaders = types.MapNull(types.StringType)
 	}
 
+	model.WhoisServer = stringOrNull(p.WhoisServer)
+	model.RDAPUrl = stringOrNull(p.RDAPUrl)
+	model.Ignore = stringOrNull(p.Ignore)
+	model.SentinelName = stringOrNull(p.SentinelName)
+	model.CheckToken = stringOrNull(p.CheckToken)
+
+	// redistype and dohdot carry schema defaults. The API omits them for check
+	// types that do not use them, so falling back to the default here is what
+	// keeps a refresh from producing a permanent diff.
+	model.RedisType = stringOrDefault(p.RedisType, "standalone")
+	model.DoHDoT = stringOrDefault(p.DoHDoT, "doh")
+
+	model.OldResultFail = boolOrNull(p.OldResultFail)
+	model.VerifyVolume = boolOrNull(p.VerifyVolume)
+	model.VolumeMin = int64OrNull(p.VolumeMin, "volumemin", check.ID, diags)
+
+	model.Data = dataToMap(ctx, p.Data, diags)
+
+	if len(p.EDNS) > 0 {
+		edns, d := types.MapValueFrom(ctx, types.StringType, p.EDNS)
+		diags.Append(d...)
+		model.EDNS = edns
+	} else {
+		model.EDNS = types.MapNull(types.StringType)
+	}
+
+	model.Fields = fieldsToMap(ctx, p.Fields, check.ID, diags)
+	model.Hosts = hostsToMap(ctx, p.Hosts, diags)
+
 	model.Notifications = mapNotifications(check.Notifications)
+}
+
+// stringOrDefault renders an API string, substituting a default when the API
+// left the field out entirely.
+func stringOrDefault(s, fallback string) types.String {
+	if s == "" {
+		return types.StringValue(fallback)
+	}
+	return types.StringValue(s)
+}
+
+// dataToMap renders the loosely typed "data" parameter as a map of strings.
+// NodePing returns it as a JSON object whose values may be strings or numbers.
+func dataToMap(ctx context.Context, raw interface{}, diags *diag.Diagnostics) types.Map {
+	obj, ok := raw.(map[string]interface{})
+	if !ok || len(obj) == 0 {
+		return types.MapNull(types.StringType)
+	}
+
+	data := make(map[string]string, len(obj))
+	for key, value := range obj {
+		switch v := value.(type) {
+		case string:
+			data[key] = v
+		case bool:
+			data[key] = strconv.FormatBool(v)
+		case nil:
+			data[key] = ""
+		default:
+			if i, ok := toInt64(v); ok {
+				data[key] = strconv.FormatInt(i, 10)
+			} else {
+				data[key] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	result, d := types.MapValueFrom(ctx, types.StringType, data)
+	diags.Append(d...)
+	return result
+}
+
+// fieldsToMap renders the "fields" parameter onto the model.
+func fieldsToMap(ctx context.Context, fields map[string]client.CheckField, checkID string, diags *diag.Diagnostics) types.Map {
+	if len(fields) == 0 {
+		return types.MapNull(CheckFieldObjectType())
+	}
+
+	// Map iteration order is randomised; sort so the diagnostics a malformed
+	// response produces are stable.
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	elements := make(map[string]attr.Value, len(fields))
+	for _, key := range keys {
+		f := fields[key]
+		object, d := types.ObjectValue(checkFieldAttrTypes, map[string]attr.Value{
+			"name":  types.StringValue(f.Name),
+			"min":   int64OrNull(f.Min, "fields."+key+".min", checkID, diags),
+			"max":   int64OrNull(f.Max, "fields."+key+".max", checkID, diags),
+			"match": stringOrNull(f.Match),
+		})
+		diags.Append(d...)
+		elements[key] = object
+	}
+
+	result, d := types.MapValue(CheckFieldObjectType(), elements)
+	diags.Append(d...)
+	return result
+}
+
+// hostsToMap renders the REDIS "hosts" parameter onto the model. The per-host
+// password is deliberately left null: NodePing echoes it back in plaintext and
+// persisting it would leak the credential into state. mapForRead restores the
+// value already known from the configuration.
+func hostsToMap(ctx context.Context, hosts map[string]client.RedisHost, diags *diag.Diagnostics) types.Map {
+	if len(hosts) == 0 {
+		return types.MapNull(RedisHostObjectType())
+	}
+
+	elements := make(map[string]attr.Value, len(hosts))
+	for key, h := range hosts {
+		port := types.Int64Null()
+		if h.Port != 0 {
+			port = types.Int64Value(int64(h.Port))
+		}
+		object, d := types.ObjectValue(redisHostAttrTypes, map[string]attr.Value{
+			"host":                types.StringValue(h.Host),
+			"port":                port,
+			"password":            types.StringNull(),
+			"password_wo":         types.StringNull(),
+			"password_wo_version": types.Int64Null(),
+		})
+		diags.Append(d...)
+		elements[key] = object
+	}
+
+	result, d := types.MapValue(RedisHostObjectType(), elements)
+	diags.Append(d...)
+	return result
+}
+
+// clearHostWriteOnlyPasswords nulls hosts[*].password_wo on a hosts map,
+// leaving every other member untouched.
+func clearHostWriteOnlyPasswords(ctx context.Context, hosts types.Map, diags *diag.Diagnostics) types.Map {
+	if !isSet(hosts) {
+		return hosts
+	}
+
+	current := make(map[string]RedisHostModel)
+	diags.Append(hosts.ElementsAs(ctx, &current, false)...)
+	if diags.HasError() {
+		return hosts
+	}
+
+	elements := make(map[string]attr.Value, len(current))
+	for key, h := range current {
+		object, d := types.ObjectValue(redisHostAttrTypes, map[string]attr.Value{
+			"host":                h.Host,
+			"port":                h.Port,
+			"password":            h.Password,
+			"password_wo":         types.StringNull(),
+			"password_wo_version": h.PasswordWOVersion,
+		})
+		diags.Append(d...)
+		elements[key] = object
+	}
+
+	result, d := types.MapValue(RedisHostObjectType(), elements)
+	diags.Append(d...)
+	return result
+}
+
+// restoreHostPasswords copies the per-host credential bookkeeping recorded in
+// prior back onto the freshly read hosts map, keyed by host identifier: the
+// deprecated plaintext password and the password_wo_version counter. password_wo
+// itself is write-only and stays null by construction. Hosts the API no longer
+// reports are dropped, so real drift in host or port still surfaces.
+func restoreHostPasswords(ctx context.Context, prior, current types.Map, diags *diag.Diagnostics) types.Map {
+	if !isSet(prior) || !isSet(current) {
+		return current
+	}
+
+	priorHosts := make(map[string]RedisHostModel)
+	diags.Append(prior.ElementsAs(ctx, &priorHosts, false)...)
+	currentHosts := make(map[string]RedisHostModel)
+	diags.Append(current.ElementsAs(ctx, &currentHosts, false)...)
+	if diags.HasError() {
+		return current
+	}
+
+	elements := make(map[string]attr.Value, len(currentHosts))
+	for key, h := range currentHosts {
+		password := h.Password
+		version := h.PasswordWOVersion
+		if p, ok := priorHosts[key]; ok {
+			if isSet(p.Password) {
+				password = p.Password
+			}
+			if isSet(p.PasswordWOVersion) {
+				version = p.PasswordWOVersion
+			}
+		}
+		object, d := types.ObjectValue(redisHostAttrTypes, map[string]attr.Value{
+			"host":                h.Host,
+			"port":                h.Port,
+			"password":            password,
+			"password_wo":         types.StringNull(),
+			"password_wo_version": version,
+		})
+		diags.Append(d...)
+		elements[key] = object
+	}
+
+	result, d := types.MapValue(RedisHostObjectType(), elements)
+	diags.Append(d...)
+	return result
 }
 
 // mapNotifications flattens the API notification representation

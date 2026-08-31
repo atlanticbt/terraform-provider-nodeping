@@ -52,19 +52,85 @@ definitions:
         script:
           - go build -trimpath -ldflags "-s -w -X main.version=dev-${BITBUCKET_BUILD_NUMBER}" -o /dev/null .
 
-    - step: &release
-        name: Build and Publish Provider
+    # Builds the release archives. goreleaser cannot publish to Bitbucket
+    # (it targets GitHub/GitLab/Gitea only), so this builds with --skip=publish
+    # and hands the artifacts to the publish step below.
+    - step: &package
+        name: Package Release Archives
         caches: [gomod]
         script:
-          # goreleaser cannot publish to Bitbucket, so build only and ship the
-          # artifacts to the ABT private provider mirror ourselves.
-          - apt-get update -qq && apt-get install -y -qq gnupg awscli
-          - echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-          - export GPG_FINGERPRINT=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
           - go install github.com/goreleaser/goreleaser/v2@latest
           - goreleaser release --clean --skip=publish
-          - aws s3 sync dist/ "s3://${PROVIDER_MIRROR_BUCKET}/atlanticbt.com/abt/nodeping/${BITBUCKET_TAG}/"
-              --exclude "*" --include "*.zip" --include "*SHA256SUMS*"
+          - ls -la dist/*.zip
+        artifacts:
+          - dist/**
+
+    # Publishes to the ABT private provider mirror.
+    #
+    # Uploading the zips alone does NOT make a working mirror: OpenTofu resolves
+    # providers through index.json and <version>.json documents, so those are
+    # generated here with h1 hashes. Omitting the hashes would make OpenTofu
+    # install the archives with no verification at all.
+    #
+    # Auth is Bitbucket OIDC -> AWS role assumption. No AWS access keys are
+    # stored as repository variables. See docs/mirror.md for the AWS setup.
+    - step: &publish-mirror
+        name: Publish to Provider Mirror
+        oidc: true
+        image: amazon/aws-cli:latest
+        script:
+          - yum install -y golang tar gzip >/dev/null 2>&1 || true
+          - export VERSION="${BITBUCKET_TAG#v}"
+          - export MIRROR_PATH="atlanticbt.com/abt/nodeping"
+
+          # Exchange the Bitbucket OIDC token for AWS credentials. The SDK picks
+          # these env vars up automatically; nothing is written to disk beyond
+          # the short-lived token itself.
+          - echo "$BITBUCKET_STEP_OIDC_TOKEN" > /tmp/oidc-token
+          - export AWS_WEB_IDENTITY_TOKEN_FILE=/tmp/oidc-token
+          - export AWS_ROLE_ARN="$PROVIDER_MIRROR_ROLE_ARN"
+          - export AWS_ROLE_SESSION_NAME="bitbucket-${BITBUCKET_BUILD_NUMBER}"
+          - export AWS_REGION="${PROVIDER_MIRROR_REGION:-us-east-1}"
+          - aws sts get-caller-identity
+
+          # Merge into the currently published index rather than replacing it,
+          # or every previously released version becomes unresolvable.
+          - |
+            aws s3 cp "s3://${PROVIDER_MIRROR_BUCKET}/${MIRROR_PATH}/index.json" /tmp/current-index.json \
+              || echo "no existing index (first publish)"
+
+          - |
+            cd tools/mirror-index
+            go run . \
+              -dist ../../dist \
+              -version "$VERSION" \
+              -out /tmp/mirror \
+              -existing-index /tmp/current-index.json
+            cd ../..
+
+          # Archives first, then the index documents. Publishing the index
+          # before the archives it references would leave the mirror briefly
+          # advertising a version that cannot be downloaded.
+          - |
+            aws s3 cp dist/ "s3://${PROVIDER_MIRROR_BUCKET}/${MIRROR_PATH}/" \
+              --recursive --exclude "*" --include "*.zip" \
+              --content-type application/zip
+          - |
+            aws s3 cp /tmp/mirror/ "s3://${PROVIDER_MIRROR_BUCKET}/${MIRROR_PATH}/" \
+              --recursive --exclude "*" --include "*.json" \
+              --content-type application/json --cache-control "max-age=60"
+
+          # The index documents must not be served stale after a release.
+          - |
+            if [ -n "$PROVIDER_MIRROR_CF_DISTRIBUTION_ID" ]; then
+              aws cloudfront create-invalidation \
+                --distribution-id "$PROVIDER_MIRROR_CF_DISTRIBUTION_ID" \
+                --paths "/${MIRROR_PATH}/index.json" "/${MIRROR_PATH}/${VERSION}.json"
+            else
+              echo "PROVIDER_MIRROR_CF_DISTRIBUTION_ID unset; skipping CDN invalidation"
+            fi
+
+          - echo "published ${VERSION} to ${MIRROR_PATH}"
 
 pipelines:
   pull-requests:
@@ -92,7 +158,8 @@ pipelines:
           - step: *test
           - step: *vulncheck
           - step: *secret-scan
+      - step: *package
       - step:
-          <<: *release
+          <<: *publish-mirror
           trigger: manual
           deployment: production
