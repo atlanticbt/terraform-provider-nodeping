@@ -196,6 +196,70 @@ func TestListAccountsWrapsAPIError(t *testing.T) {
 	}
 }
 
+// A client configured with customer_id appends ?customerid= to every request,
+// and NodePing then answers GET /accounts with that one account document rather
+// than the ID-keyed listing.
+func TestListAccountsDecodesSingleAccountDocumentWhenScopedToSubaccount(t *testing.T) {
+	c := newAccountsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("customerid"); got != "SUB1" {
+			t.Errorf("customerid = %q, want SUB1", got)
+		}
+		writeJSON(t, w, http.StatusOK, map[string]interface{}{
+			"_id":              testAccountID,
+			"type":             "subcustomer",
+			"creation_date":    1332535680000,
+			"status":           "Active",
+			"customer_name":    "Example Client",
+			"sdomain":          "nodeping.com",
+			"parent":           "201203232048C76FG",
+			"planId":           "free",
+			"timezone":         "-7",
+			"defaultlocations": []string{"nam"},
+			"emailme":          false,
+			"customerid":       testAccountID,
+		})
+	}).WithCustomerID("SUB1")
+
+	listing, err := c.ListAccounts(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(listing) != 1 {
+		t.Fatalf("expected 1 account, got %d: %+v", len(listing), listing)
+	}
+	summary, ok := listing[testAccountID]
+	if !ok {
+		t.Fatalf("expected the entry to be keyed by _id, got %+v", listing)
+	}
+	if summary.Name != "Example Client" {
+		t.Errorf("Name = %q, want %q", summary.Name, "Example Client")
+	}
+	if summary.Status != "Active" {
+		t.Errorf("Status = %q, want Active", summary.Status)
+	}
+	// The document's `parent` is the parent account's ID; AccountSummary.Parent
+	// is the subaccount count that identifies the primary account. Copying one
+	// into the other would report a subaccount as the primary account.
+	if summary.Parent != nil {
+		t.Errorf("expected no subaccount count on a subaccount document, got %d", *summary.Parent)
+	}
+}
+
+func TestListAccountsReportsAnUndecodableListingEntry(t *testing.T) {
+	c := newAccountsTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"SUB1":"not an account"}`))
+	})
+
+	_, err := c.ListAccounts(context.Background())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "failed to list accounts") || !strings.Contains(err.Error(), "SUB1") {
+		t.Errorf("expected the error to name the failing entry, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GetAccount
 // ---------------------------------------------------------------------------

@@ -1527,6 +1527,37 @@ func TestValidateConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("false content flags are accepted for any check type", func(t *testing.T) {
+		// NodePing stores regex/invert/follow/ipv6 as false on PUSH checks and
+		// returns them on every read, so the provider's own refresh output has
+		// to survive its own validator. See A-017.
+		m := configModel()
+		m.Type = types.StringValue("PUSH")
+		m.Target = types.StringNull()
+		m.Regex = types.BoolValue(false)
+		m.Invert = types.BoolValue(false)
+		m.DNSRD = types.BoolValue(false)
+		if diags := validateConfig(t, m); diags.HasError() {
+			t.Errorf("unexpected error: %v", diags)
+		}
+	})
+
+	t.Run("true content flags are still rejected for the wrong type", func(t *testing.T) {
+		for _, set := range []func(*CheckResourceModel){
+			func(m *CheckResourceModel) { m.Regex = types.BoolValue(true) },
+			func(m *CheckResourceModel) { m.Invert = types.BoolValue(true) },
+			func(m *CheckResourceModel) { m.DNSRD = types.BoolValue(true) },
+		} {
+			m := configModel()
+			m.Type = types.StringValue("PUSH")
+			m.Target = types.StringNull()
+			set(&m)
+			if !validateConfig(t, m).HasError() {
+				t.Error("expected an error for a flag enabled on a PUSH check")
+			}
+		}
+	})
+
 	t.Run("unknown type is not validated", func(t *testing.T) {
 		m := configModel()
 		m.Type = types.StringUnknown()

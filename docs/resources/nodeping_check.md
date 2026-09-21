@@ -190,12 +190,20 @@ resource "nodeping_check" "service" {
 - `regex` - (Optional) Treat contentstring as regular expression.
 - `invert` - (Optional) Invert match (does not contain).
 
+Both are rejected on a check type that does not support content matching, but only when set to
+`true`. NodePing stores them as `false` on every check type and returns them on read, so `false`
+is accepted everywhere — otherwise an imported PUSH check would not validate. The same applies to
+`dnsrd`.
+
 ### HTTP Arguments
 
 - `follow` - (Optional) Follow redirects (up to 4).
 - `method` - (Optional) HTTP method for HTTPADV: `GET`, `POST`, `PUT`, `HEAD`, `TRACE`, `CONNECT`.
 - `statuscode` - (Optional) Expected HTTP status code.
-- `sendheaders` - (Optional) Map of request headers.
+- `sendheaders` - (Optional) Map of request headers. Not marked sensitive, so the values appear
+  in plan output and in generated configuration. That is deliberate: a sensitive map is written
+  as `null` by `tofu plan -generate-config-out`, and applying the result deletes the live headers.
+  If a header carries a credential, encrypt the state and restrict who can read plan output.
 - `receiveheaders` - (Optional) Map of expected response headers.
 - `postdata` - (Optional) POST request body.
 - `ipv6` - (Optional) Use IPv6.
@@ -210,7 +218,8 @@ resource "nodeping_check" "service" {
 
 ### SSL/TLS Arguments
 
-- `warningdays` - (Optional) Days before expiry to fail check.
+- `warningdays` - (Optional) Days before expiry to fail check. `0` is accepted; NodePing stores it
+  and returns it on read. The provider enforces no minimum because NodePing does not document one.
 - `servername` - (Optional) Server name for SNI.
 - `verify` - (Optional) Verify SSL certificate.
 - `secure` - (Optional) SSL mode: `false`, `ssl`, `starttls`.

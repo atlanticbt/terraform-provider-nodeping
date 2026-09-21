@@ -635,10 +635,13 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 					int64validator.Between(100, 599),
 				},
 			},
+			// Deliberately not Sensitive, even though it can carry an
+			// Authorization header: config generation emits `null # sensitive`
+			// and the resulting plan silently deletes the live headers. See
+			// A-015.
 			"sendheaders": schema.MapAttribute{
 				Description: "HTTP headers to send with the request.",
 				Optional:    true,
-				Sensitive:   true,
 				ElementType: types.StringType,
 			},
 			"receiveheaders": schema.MapAttribute{
@@ -744,13 +747,13 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 					stringvalidator.OneOf("udp", "tcp", "tls", "ws", "wss"),
 				},
 			},
+			// No lower bound: NodePing accepts and stores warningdays = 0, and
+			// its real minimum is undocumented. Inventing one makes existing
+			// checks impossible to import.
 			"warningdays": schema.Int64Attribute{
 				Description: "Days before certificate/domain expiry to fail.",
 				Optional:    true,
 				Computed:    true,
-				Validators: []validator.Int64{
-					int64validator.AtLeast(1),
-				},
 			},
 			"servername": schema.StringAttribute{
 				Description: "Server name for SNI in SSL checks.",
