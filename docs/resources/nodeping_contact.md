@@ -116,6 +116,13 @@ The `address` block supports the following arguments:
   - SMS/Voice: `+1-555-123-4567`
   - Webhook: `https://example.com/webhook`
 
+  Not marked sensitive, so it is shown in plan output. Marking it sensitive would make the
+  contact impossible to import: `tofu plan -generate-config-out` writes `null` for a sensitive
+  attribute, and a required attribute set to `null` is a configuration error. The value is an
+  email address or phone number rather than a credential, and NodePing displays it in its own
+  UI. `headers` and `querystrings` are treated the same way, for the reason given under
+  [Webhook-Specific Arguments](#webhook-specific-arguments).
+
 - `suppress_up` - (Optional) Suppress "up" notifications. Defaults to `false`.
 - `suppress_down` - (Optional) Suppress "down" notifications. Defaults to `false`.
 - `suppress_first` - (Optional) Suppress "first result" notifications. Defaults to `false`.
@@ -128,6 +135,15 @@ The `address` block supports the following arguments:
 - `action` - (Optional) HTTP method for webhook requests. Valid values: `get`, `put`, `post`, `head`, `delete`. Defaults to `get`.
 - `headers` - (Optional) Map of HTTP headers to send with webhook requests.
 - `querystrings` - (Optional) Map of query string parameters to append to webhook URL.
+
+  Neither is marked sensitive, so both appear in plan output and in generated configuration. That
+  is deliberate: a sensitive attribute is written as `null` by `tofu plan -generate-config-out`,
+  so an imported webhook contact would plan `(sensitive value) -> null` and the apply would clear
+  the real values — silently, because the diff shows `(sensitive value)` on both sides.
+
+  These frequently carry an authentication token. Configuration generated from an account that
+  uses webhook auth therefore contains live credentials: scrub the file before committing it, and
+  prefer a variable reference over the literal value. See A-015 in `docs/assumptions.md`.
 - `data` - (Optional) Request body for POST/PUT webhook requests.
 
 #### Pushover-Specific Arguments

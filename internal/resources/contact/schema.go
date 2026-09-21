@@ -174,10 +174,13 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 								"NodePing may support additional notification types; the value is validated by the API.",
 							Required: true,
 						},
+						// Deliberately not Sensitive. Config generation writes
+						// `null # sensitive` for a sensitive attribute, which
+						// leaves a Required attribute unset and makes the
+						// contact impossible to import. See A-015.
 						"address": schema.StringAttribute{
 							Description: "The address value (email, phone number, webhook URL, etc.).",
 							Required:    true,
-							Sensitive:   true,
 						},
 						"suppress_up": schema.BoolAttribute{
 							Description: "Suppress 'up' notifications to this address.",
@@ -222,16 +225,21 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 								stringvalidator.OneOf("get", "put", "post", "head", "delete"),
 							},
 						},
+						// Not marked sensitive, for the reason recorded in A-015:
+						// generated configuration writes null for a sensitive
+						// attribute, so importing a webhook contact would plan to
+						// delete whatever these hold. These can carry an auth
+						// token, so plan output shows it.
 						"headers": schema.MapAttribute{
-							Description: "HTTP headers for webhook addresses. Often carries authentication tokens.",
+							Description: "HTTP headers for webhook addresses. Often carries authentication tokens, " +
+								"which appear in plan output and in generated configuration.",
 							Optional:    true,
-							Sensitive:   true,
 							ElementType: types.StringType,
 						},
 						"querystrings": schema.MapAttribute{
-							Description: "Query string parameters for webhook addresses. Often carries authentication tokens.",
+							Description: "Query string parameters for webhook addresses. Often carries authentication " +
+								"tokens, which appear in plan output and in generated configuration.",
 							Optional:    true,
-							Sensitive:   true,
 							ElementType: types.StringType,
 						},
 						"data": schema.StringAttribute{

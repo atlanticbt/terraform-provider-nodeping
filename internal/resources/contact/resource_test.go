@@ -579,8 +579,15 @@ func TestMetadataAndSchema(t *testing.T) {
 		t.Fatal("address block is not a list nested block")
 	}
 	nested := block.NestedObject.Attributes
-	if !nested["headers"].IsSensitive() || !nested["querystrings"].IsSensitive() {
-		t.Fatal("headers and querystrings must be marked sensitive")
+	// tofu plan -generate-config-out writes `null # sensitive` for a sensitive
+	// attribute. address is Required, so that makes a generated configuration
+	// invalid and the contact impossible to import; headers and querystrings are
+	// Optional, so instead the plan silently proposes deleting whatever they
+	// hold. None of the three is marked sensitive. See A-015.
+	for _, name := range []string{"address", "headers", "querystrings"} {
+		if nested[name].IsSensitive() {
+			t.Fatalf("%s must not be sensitive: config generation would emit null and the import would be lossy", name)
+		}
 	}
 	if _, ok := nested["data"].GetType().(JSONStringType); !ok {
 		t.Fatalf("data must use the semantic-equality custom type, got %T", nested["data"].GetType())

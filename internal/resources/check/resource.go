@@ -476,6 +476,15 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 		if value.IsNull() || value.IsUnknown() {
 			return
 		}
+		// NodePing stores these boolean flags as false on check types that do
+		// not use them, and returns them on read: of 35 live checks surveyed,
+		// invert came back false on PUSH checks as well as HTTP ones. So a
+		// refresh legitimately produces invert = false on a PUSH check, and
+		// rejecting it would make the provider reject its own output. A flag
+		// turned on is still a mistake worth reporting.
+		if b, isBool := value.(types.Bool); isBool && !b.ValueBool() {
+			return
+		}
 		if !allowed[checkType] {
 			resp.Diagnostics.AddAttributeError(
 				path.Root(name),

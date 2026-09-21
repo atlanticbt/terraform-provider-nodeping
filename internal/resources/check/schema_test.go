@@ -34,11 +34,18 @@ func TestSchemaCoversEveryCheckType(t *testing.T) {
 func TestSchemaAttributeFlags(t *testing.T) {
 	s := CheckSchema()
 
-	sensitive := []string{"password", "password_wo", "snmpcom", "sendheaders", "checktoken"}
+	sensitive := []string{"password", "password_wo", "snmpcom", "checktoken"}
 	for _, name := range sensitive {
 		if !s.Attributes[name].IsSensitive() {
 			t.Errorf("%s must be marked sensitive", name)
 		}
+	}
+
+	// tofu plan -generate-config-out writes `null # sensitive` for every
+	// sensitive attribute, so marking sendheaders sensitive made an import of a
+	// check that sends headers propose deleting them. See A-015.
+	if s.Attributes["sendheaders"].IsSensitive() {
+		t.Error("sendheaders must not be sensitive: config generation would emit null and propose deleting live headers")
 	}
 
 	// An attribute is Optional + Computed only when NodePing supplies a value
@@ -81,6 +88,29 @@ func TestSchemaAttributeFlags(t *testing.T) {
 
 	if _, ok := s.Attributes["tags"].(schema.SetAttribute); !ok {
 		t.Errorf("tags should be a set, got %T", s.Attributes["tags"])
+	}
+}
+
+func TestWarningDaysAcceptsTheValuesTheAPIReturns(t *testing.T) {
+	ctx := testContext()
+	attribute, ok := CheckSchema().Attributes["warningdays"].(schema.Int64Attribute)
+	if !ok {
+		t.Fatal("warningdays is not an int64 attribute")
+	}
+
+	// A live SSL check stores warningdays = 0. A floor the API does not enforce
+	// makes that check impossible to import. See A-016.
+	for _, days := range []int64{0, 1, 14, 365} {
+		resp := &validator.Int64Response{}
+		for _, v := range attribute.Validators {
+			v.ValidateInt64(ctx, validator.Int64Request{
+				Path:        path.Root("warningdays"),
+				ConfigValue: types.Int64Value(days),
+			}, resp)
+		}
+		if resp.Diagnostics.HasError() {
+			t.Errorf("warningdays %d should be accepted: %v", days, resp.Diagnostics)
+		}
 	}
 }
 
