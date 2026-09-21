@@ -64,6 +64,10 @@ output "subaccount_ids" {
 }
 ` + "```" + `
 
+When the provider is configured with ` + "`customer_id`" + `, NodePing scopes the endpoint to that
+account and returns it alone. The list then holds one entry, with ` + "`active_checks`" + ` at 0 and
+` + "`subaccount_count`" + ` null, because the scoped response carries neither figure.
+
 The listing carries only summary fields. Use the ` + "`nodeping_account`" + ` data source
 for an account's timezone, default locations and billing date.
 

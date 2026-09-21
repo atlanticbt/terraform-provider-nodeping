@@ -60,6 +60,12 @@ Read-Only:
 
 ## Notes
 
+When the provider is configured with `customer_id`, NodePing scopes this endpoint to that one
+account and returns it on its own rather than returning a listing. The data source then reports
+a single entry: the configured account, with `active_checks` at `0` and `subaccount_count` null,
+because the scoped response carries neither figure. Configure the provider without `customer_id`
+to see the primary account and every subaccount.
+
 The listing carries only these summary fields. For an account's timezone, default probe
 locations, creation date or billing date, use the
 [`nodeping_account`](nodeping_account.md) data source.

@@ -194,6 +194,40 @@ func TestDataSourceRead(t *testing.T) {
 	}
 }
 
+// The live GET /maintenance response wraps the windows in an envelope and
+// separates ad-hoc windows into their own group.
+func TestDataSourceReadDecodesTheMaintenanceEnvelope(t *testing.T) {
+	ctx := context.Background()
+
+	d := newTestDataSource(t, func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"customer_id":"201203232048C76FH",
+			"schedules":{"A1":{"id":"A1","name":"first","enabled":true,"cron":"0 3 * * 0","duration":60,"checklist":["C1"]}},
+			"ad-hoc":{"B2":{"id":"B2","name":"one off","enabled":true,"duration":15,"checklist":["C1"]}}
+		}`))
+	})
+
+	resp := &datasource.ReadResponse{State: dataSourceState(t, ctx)}
+	d.Read(ctx, datasource.ReadRequest{Config: testConfig(t, ctx, MaintenancesDataSourceModel{})}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read diagnostics: %v", resp.Diagnostics)
+	}
+
+	var got MaintenancesDataSourceModel
+	if diags := resp.State.Get(ctx, &got); diags.HasError() {
+		t.Fatalf("state diagnostics: %v", diags)
+	}
+	if len(got.Maintenances) != 2 {
+		t.Fatalf("got %d windows: %+v", len(got.Maintenances), got.Maintenances)
+	}
+	if got.Maintenances[0].ID.ValueString() != "A1" || got.Maintenances[0].AdHoc.ValueBool() {
+		t.Errorf("a scheduled window was mapped wrongly: %+v", got.Maintenances[0])
+	}
+	if got.Maintenances[1].ID.ValueString() != "B2" || !got.Maintenances[1].AdHoc.ValueBool() {
+		t.Errorf("a window from the ad-hoc group must be flagged: %+v", got.Maintenances[1])
+	}
+}
+
 func TestDataSourceReadScopesToCustomerID(t *testing.T) {
 	ctx := context.Background()
 

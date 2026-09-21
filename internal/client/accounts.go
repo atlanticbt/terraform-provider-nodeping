@@ -165,16 +165,83 @@ type AccountDeleteResponse struct {
 
 // ListAccounts returns the account listing keyed by account ID. Callers must
 // sort the keys before producing ordered output.
+//
+// NodePing returns the ID-keyed listing only when the request carries no
+// `customerid`. The shared client appends one whenever the provider is
+// configured with a customer ID, and the API then answers with that single
+// account document instead. Both shapes are normalised to the listing here so
+// callers see one contract.
 func (c *Client) ListAccounts(ctx context.Context) (map[string]AccountSummary, error) {
-	var result map[string]AccountSummary
+	var raw map[string]json.RawMessage
 	err := c.doRequest(ctx, requestOptions{
 		method: http.MethodGet,
 		path:   "/accounts",
-	}, &result)
+	}, &raw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list accounts: %w", err)
 	}
-	return result, nil
+
+	// `_id` marks the single-account document; a listing is keyed by account ID
+	// and never carries it at the top level. GetAccount detects it the same way.
+	if _, ok := raw["_id"]; ok {
+		id, summary, err := accountSummaryFromDocument(raw)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list accounts: %w", err)
+		}
+		return map[string]AccountSummary{id: summary}, nil
+	}
+
+	listing := make(map[string]AccountSummary, len(raw))
+	for id, entry := range raw {
+		var summary AccountSummary
+		if err := json.Unmarshal(entry, &summary); err != nil {
+			return nil, fmt.Errorf("failed to list accounts: account %q: %w", id, err)
+		}
+		listing[id] = summary
+	}
+	return listing, nil
+}
+
+// accountSummaryFromDocument turns the single-account document into a listing
+// entry.
+//
+// The document names the account `customer_name` where the listing uses `name`,
+// and it has no check count, so Count stays zero. Its `parent` holds the parent
+// account's ID as a string, which is not what AccountSummary.Parent means:
+// there Parent is the subaccount count that appears only on the primary
+// account. Copying one into the other would make every subaccount look like the
+// primary account, so the document's parent is deliberately dropped.
+func accountSummaryFromDocument(raw map[string]json.RawMessage) (string, AccountSummary, error) {
+	var id string
+	if err := json.Unmarshal(raw["_id"], &id); err != nil {
+		return "", AccountSummary{}, fmt.Errorf("account document: _id: %w", err)
+	}
+	if id == "" {
+		return "", AccountSummary{}, fmt.Errorf("account document: _id is empty")
+	}
+
+	var summary AccountSummary
+	if err := decodeStringField(raw, "customer_name", &summary.Name); err != nil {
+		return "", AccountSummary{}, fmt.Errorf("account document %q: %w", id, err)
+	}
+	if err := decodeStringField(raw, "status", &summary.Status); err != nil {
+		return "", AccountSummary{}, fmt.Errorf("account document %q: %w", id, err)
+	}
+
+	return id, summary, nil
+}
+
+// decodeStringField reads one optional string field out of a decoded JSON
+// object, leaving the target untouched when the field is absent.
+func decodeStringField(raw map[string]json.RawMessage, field string, target *string) error {
+	entry, ok := raw[field]
+	if !ok {
+		return nil
+	}
+	if err := json.Unmarshal(entry, target); err != nil {
+		return fmt.Errorf("%s: %w", field, err)
+	}
+	return nil
 }
 
 // GetAccount fetches a single account. An empty id means "the account this API

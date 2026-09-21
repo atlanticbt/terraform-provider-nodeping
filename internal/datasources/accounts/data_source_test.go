@@ -177,6 +177,48 @@ func TestReadPopulatesState(t *testing.T) {
 	}
 }
 
+// A provider configured with customer_id scopes GET /accounts to that account,
+// and NodePing answers with the single account document instead of the listing.
+func TestReadHandlesTheSingleAccountDocument(t *testing.T) {
+	ctx := context.Background()
+	d := newTestDataSource(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if err := json.NewEncoder(w).Encode(map[string]interface{}{
+			"_id":           "201203232048C76FH",
+			"type":          "subcustomer",
+			"status":        "Active",
+			"customer_name": "Example Client",
+			"parent":        "201203232048C76FG",
+			"timezone":      "-7",
+		}); err != nil {
+			t.Fatalf("encode failed: %v", err)
+		}
+	})
+
+	resp := &datasource.ReadResponse{State: newEmptyState(t, ctx)}
+	d.Read(ctx, datasource.ReadRequest{}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+	}
+
+	state := decodeState(t, ctx, resp.State)
+	if len(state.Accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(state.Accounts))
+	}
+	account := state.Accounts[0]
+	if account.ID.ValueString() != "201203232048C76FH" {
+		t.Errorf("id = %q", account.ID.ValueString())
+	}
+	if account.Name.ValueString() != "Example Client" {
+		t.Errorf("name = %q", account.Name.ValueString())
+	}
+	// The document's `parent` names the parent account; it is not a subaccount
+	// count, so the subaccount must not be reported as the primary account.
+	if !account.SubaccountCount.IsNull() {
+		t.Errorf("subaccount_count = %v, want null", account.SubaccountCount)
+	}
+}
+
 func TestReadReportsAPIFailure(t *testing.T) {
 	ctx := context.Background()
 	d := newTestDataSource(t, func(w http.ResponseWriter, r *http.Request) {

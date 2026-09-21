@@ -218,6 +218,96 @@ func TestListMaintenanceWrapsError(t *testing.T) {
 	}
 }
 
+// GET /maintenance wraps the windows in an envelope with `customer_id`,
+// `schedules` and `ad-hoc` keys rather than returning them keyed by ID.
+func TestListMaintenanceDecodesTheEnvelope(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"customer_id": "201203232048C76FH",
+			"schedules": {
+				"9VKOB": {"id":"9VKOB","name":"Weekly","enabled":true,"cron":"0 3 * * 0","duration":60,"checklist":["C1"]}
+			},
+			"ad-hoc": {}
+		}`))
+	})
+
+	got, err := c.ListMaintenance(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected 1 window, got %d: %+v", len(got), got)
+	}
+	window := got["9VKOB"]
+	if window.Name != "Weekly" || window.Duration != 60 {
+		t.Fatalf("unexpected window: %+v", window)
+	}
+	if window.IsAdHoc() {
+		t.Error("a window under `schedules` must not be flagged as ad-hoc")
+	}
+}
+
+// An ad-hoc window carries its own generated ID, so the envelope key it arrives
+// under is the only signal that it is ad-hoc.
+func TestListMaintenanceFlagsWindowsUnderTheAdHocKey(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"customer_id": "201203232048C76FH",
+			"schedules": {"9VKOB": {"id":"9VKOB","name":"Weekly","duration":60}},
+			"ad-hoc": {"9VKOC": {"id":"9VKOC","name":"One off","duration":30}}
+		}`))
+	})
+
+	got, err := c.ListMaintenance(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 windows, got %d: %+v", len(got), got)
+	}
+	adHoc := got["9VKOC"]
+	if !adHoc.IsAdHoc() {
+		t.Error("a window under `ad-hoc` must be flagged as ad-hoc")
+	}
+	scheduled := got["9VKOB"]
+	if scheduled.IsAdHoc() {
+		t.Error("a window under `schedules` must not be flagged as ad-hoc")
+	}
+}
+
+func TestListMaintenanceReturnsNoWindowsForAnEmptyEnvelope(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"customer_id":"201203232048C76FH","schedules":{},"ad-hoc":{}}`))
+	})
+
+	got, err := c.ListMaintenance(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no windows, got %+v", got)
+	}
+}
+
+func TestListMaintenanceReportsAnUndecodableWindow(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"customer_id":"C1","schedules":{"9VKOB":"not a window"},"ad-hoc":{}}`))
+	})
+
+	_, err := c.ListMaintenance(context.Background())
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "failed to list maintenance windows") ||
+		!strings.Contains(err.Error(), "schedules") {
+		t.Fatalf("expected the error to name the failing section, got %v", err)
+	}
+}
+
 func TestGetMaintenance(t *testing.T) {
 	nextRun := int64(1700000000000)
 	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {

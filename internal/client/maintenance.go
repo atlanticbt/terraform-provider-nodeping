@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -66,6 +67,11 @@ type Maintenance struct {
 	NextRun    *int64                    `json:"nextrun,omitempty"`
 	History    map[string]MaintenanceRun `json:"history,omitempty"`
 	Update     *MaintenanceUpdateInfo    `json:"update,omitempty"`
+
+	// adHoc records that the window arrived under the `ad-hoc` key of the
+	// GET /maintenance envelope. It is not a wire field and is set only while
+	// decoding that listing; read it through IsAdHoc.
+	adHoc bool
 }
 
 // Identifier returns the maintenance ID regardless of which JSON key carried it.
@@ -78,8 +84,14 @@ func (m *Maintenance) Identifier() string {
 
 // IsAdHoc reports whether the record is an ad-hoc window. Ad-hoc windows are
 // removed by NodePing once they finish running.
+//
+// GET /maintenance groups ad-hoc windows under their own `ad-hoc` key, which is
+// the authoritative signal there: a window in that group carries its own
+// generated identifier, not the `ad-hoc` sentinel. A single-window GET returns
+// a bare document with no such grouping, and a create echoes back whatever id
+// it was given, so the sentinel is still recognised for those paths.
 func (m *Maintenance) IsAdHoc() bool {
-	return strings.EqualFold(m.Identifier(), AdHocMaintenanceID)
+	return m.adHoc || strings.EqualFold(m.Identifier(), AdHocMaintenanceID)
 }
 
 // SortedHistory returns the recorded runs ordered oldest first. The API returns
@@ -235,17 +247,82 @@ func normalizeChecklist(checklist []string) []string {
 	return out
 }
 
+// maintenanceSchedulesKey is the envelope key holding the scheduled windows of
+// a GET /maintenance response. Ad-hoc windows arrive under AdHocMaintenanceID,
+// and the account ID under maintenanceCustomerIDKey.
+const maintenanceSchedulesKey = "schedules"
+
+// maintenanceCustomerIDKey is the envelope key holding the account ID. It is
+// only read to recognise the envelope; the ID is already known to the caller.
+const maintenanceCustomerIDKey = "customer_id"
+
 // ListMaintenance returns every maintenance window on the account, keyed by ID.
+//
+// GET /maintenance answers with an envelope of `customer_id`, `schedules` and
+// `ad-hoc` rather than a flat map, and the two groups are flattened into one
+// result here. Windows from the `ad-hoc` group are marked so IsAdHoc reports
+// them, since an ad-hoc window carries a generated identifier rather than the
+// `ad-hoc` sentinel.
+//
+// The inner window documents are decoded with Maintenance unchanged. No account
+// reachable during this work had a maintenance window, so both groups were only
+// ever observed empty: the envelope is confirmed against the live API, the
+// shape of the windows inside it is not.
 func (c *Client) ListMaintenance(ctx context.Context) (map[string]Maintenance, error) {
-	var result map[string]Maintenance
+	var raw map[string]json.RawMessage
 	err := c.doRequest(ctx, requestOptions{
 		method: http.MethodGet,
 		path:   "/maintenance",
-	}, &result)
+	}, &raw)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list maintenance windows: %w", err)
 	}
-	return result, nil
+
+	windows := make(map[string]Maintenance, len(raw))
+
+	_, hasSchedules := raw[maintenanceSchedulesKey]
+	_, hasAdHoc := raw[AdHocMaintenanceID]
+	_, hasCustomerID := raw[maintenanceCustomerIDKey]
+	if hasSchedules || hasAdHoc || hasCustomerID {
+		for _, key := range []string{maintenanceSchedulesKey, AdHocMaintenanceID} {
+			if err := collectMaintenanceGroup(raw[key], key, windows); err != nil {
+				return nil, fmt.Errorf("failed to list maintenance windows: %w", err)
+			}
+		}
+		return windows, nil
+	}
+
+	// A response keyed directly by window ID is decoded rather than ignored.
+	// Silently returning an empty result would read as "every window was
+	// deleted", which is the one wrong answer a monitoring provider must not
+	// give.
+	for id, entry := range raw {
+		var window Maintenance
+		if err := json.Unmarshal(entry, &window); err != nil {
+			return nil, fmt.Errorf("failed to list maintenance windows: window %q: %w", id, err)
+		}
+		windows[id] = window
+	}
+	return windows, nil
+}
+
+// collectMaintenanceGroup decodes one group of the GET /maintenance envelope
+// into windows. An absent or null group contributes nothing.
+func collectMaintenanceGroup(raw json.RawMessage, key string, windows map[string]Maintenance) error {
+	if len(raw) == 0 {
+		return nil
+	}
+
+	var group map[string]Maintenance
+	if err := json.Unmarshal(raw, &group); err != nil {
+		return fmt.Errorf("%s: %w", key, err)
+	}
+
+	for id, window := range group {
+		window.adHoc = key == AdHocMaintenanceID
+		windows[id] = window
+	}
+	return nil
 }
 
 // GetMaintenance fetches a single maintenance window.
