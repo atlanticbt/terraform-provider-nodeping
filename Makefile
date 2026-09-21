@@ -61,8 +61,15 @@ tidy:
 
 # Install into the local OpenTofu filesystem mirror for manual testing.
 # Requires a matching provider_installation block in ~/.tofurc — see docs/development.md.
+# The destination is removed before the copy. On Apple Silicon a Go binary
+# carries an ad-hoc code signature, and copying over an existing file reuses the
+# inode with a signature the kernel has already cached, so the replacement is
+# SIGKILLed on exec. OpenTofu reports that as "Unrecognized remote plugin
+# message ... failed to negotiate the initial go-plugin protocol handshake",
+# which points nowhere near the real cause. Only a reinstall is affected.
 install: build
 	mkdir -p "$(MIRROR_DIR)"
+	rm -f "$(MIRROR_DIR)/$(BINARY)_v$(VERSION)"
 	cp $(BINARY) "$(MIRROR_DIR)/$(BINARY)_v$(VERSION)"
 	@echo "installed to $(MIRROR_DIR)"
 
