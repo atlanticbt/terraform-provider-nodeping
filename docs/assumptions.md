@@ -303,3 +303,119 @@ honours it only for PGSQL, MYSQL, and MONGODB.
 attribute description and resource documentation state where it takes effect.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+
+---
+
+## A-015 — Header, query-string and address values are not marked sensitive
+
+**Assumption:** `nodeping_check.sendheaders`, `nodeping_contact.address.address`,
+`address.headers` and `address.querystrings` are readable in plan output and in generated
+configuration, in exchange for being importable.
+
+**Why:** `tofu plan -generate-config-out` writes `null # sensitive` for every attribute marked
+`Sensitive`. Against a live subaccount of 35 checks and 9 contacts that produced two failures.
+All 9 contacts were unimportable, because `address` is Required and a required attribute set to
+`null` is a configuration error. And 9 checks planned an in-place update that would have deleted
+their live `sendheaders` — silently, since the diff shows `(sensitive value)` on both sides.
+
+This is not a hypothetical trade-off. Four checks in the subaccount used for the live run carry
+Cloudflare Access service tokens in `sendheaders`, and the first plan after the change printed
+`CF-Access-Client-Secret` in cleartext and wrote it into `generated.tf`. The decision was taken
+again with that in hand, and stands.
+
+`Sensitive` only redacts CLI output. It never kept the header out of state, and the value is
+visible in the NodePing UI to anyone who can read the check. What it bought was an import path
+that deletes production configuration on apply. A contact address is PII rather than a
+credential and the same reasoning applies with less at stake.
+
+`address.headers` and `address.querystrings` are Optional, so a sensitive marking did not make a
+contact unimportable — it made the import lossy instead, planning `(sensitive value) -> null` on
+two live webhook contacts. Same failure, quieter. They are treated the same way for consistency:
+one rule for anything that config generation has to round-trip.
+
+Credential attributes stay sensitive: `password`, `password_wo`, `snmpcom`, `clientcert`,
+`sshkey`. They are write-only or Computed, so generation never has to reproduce them.
+
+**Operational consequence:** a file written by `tofu plan -generate-config-out` against an
+account using header authentication contains live credentials. Treat it as secret-bearing —
+scrub it before it goes near version control, and prefer a variable reference over the literal
+when folding it into a root module.
+
+**Recorded by:** Doug Eubanks · **Date:** 2026-09-21
+
+---
+
+## A-016 — `warningdays` has no lower bound
+
+**Assumption:** The provider enforces no minimum on `warningdays`.
+
+**Why:** The schema declared `AtLeast(1)`. A live SSL check stores `warningdays = 0`, so importing
+it failed on a rule NodePing does not have. NodePing's real minimum is undocumented, and the same
+reasoning already applied to the `threshold` and `sens` upper bounds: a bound the API does not
+enforce turns existing resources into unmanageable ones. Replacing one invented floor with another
+would repeat the mistake.
+
+**Recorded by:** Doug Eubanks · **Date:** 2026-09-21
+
+---
+
+## A-017 — Type-applicability validation ignores boolean flags set to false
+
+**Assumption:** `regex`, `invert` and `dnsrd` are rejected on a check type that does not support
+them only when set to `true`.
+
+**Why:** NodePing returns these flags as `false` on check types that do not use them. Across 35
+live checks, `invert` was present and `false` on 19 of them — PUSH as well as HTTPADV and
+HTTPCONTENT — and `ipv6` was present and `false` on PING and PUSH checks. Presence is not
+uniform: 6 of the 7 PUSH checks omitted `invert` entirely and one carried `false`, which is the
+one that failed. The read path maps what the API sends, so that refreshed PUSH check carried
+`invert = false` and the provider's own validator then rejected its own output. `dnsrd` is
+covered by the same rule by analogy; no live check in the survey carried it. Skipping false keeps the guardrail where it is useful — a flag someone
+turned on for a check type that ignores it is still a mistake worth reporting.
+
+The read path was left alone. Nulling out type-inapplicable attributes would have meant changing
+what an Optional + Computed attribute resolves to, which risks turning a suppressed diff into an
+inconsistent-result-after-apply failure on every apply (see A-007, A-012).
+
+**Recorded by:** Doug Eubanks · **Date:** 2026-09-21
+
+---
+
+## A-018 — `GET /accounts` returns one document, not a listing, when scoped to a customer
+
+**Assumption:** When the request carries `customerid`, NodePing answers `GET /accounts` with
+that single account document, and `ListAccounts` converts it into a one-entry listing keyed by
+its `_id`. The document's `parent` is dropped rather than mapped.
+
+**Why:** Confirmed with curl against the live API. The shared client appends `customerid` to
+every request whenever the provider is configured with one, which is the normal way to manage a
+subaccount, so `nodeping_accounts` failed to decode on every read in that configuration. The
+document names the account `customer_name` where the listing uses `name`, and its `parent` holds
+the parent account's ID as a string. `AccountSummary.Parent` means something else entirely — the
+subaccount count that appears only on the primary account — so copying the ID across would have
+reported every subaccount as the primary one. The document carries no check count, so
+`active_checks` reads 0 for this shape.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-21
+
+---
+
+## A-019 — `GET /maintenance` wraps the windows, and the wrapper decides what is ad-hoc
+
+**Assumption:** `GET /maintenance` returns `customer_id`, `schedules` and `ad-hoc` at the top
+level. Both groups are flattened into one ID-keyed map, and a window from the `ad-hoc` group is
+marked so `IsAdHoc` reports it regardless of the identifier it carries.
+
+**Why:** Confirmed with curl on two accounts. The previous code decoded the response as a bare
+ID-keyed map, so the data source failed on every account. `IsAdHoc` previously matched the
+identifier against the `ad-hoc` sentinel, which is what a create accepts, not what a listing
+returns: a live ad-hoc window has its own generated ID. The sentinel check is kept for the
+single-window `GET` and for the create response, which have no wrapper to consult.
+
+**Residual:** no account reachable by our token has a maintenance window, so both groups were
+observed empty. The wrapper is verified; the shape of the window objects inside it is not. They
+are still decoded with the existing `Maintenance` struct. A response keyed directly by window ID
+is still accepted, because decoding one as the wrapper would return an empty result and an empty
+result reads as "every window was deleted".
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-21
