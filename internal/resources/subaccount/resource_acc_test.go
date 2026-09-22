@@ -1,24 +1,30 @@
+//go:build acceptance_subaccount
+
 // Package subaccount's acceptance test.
 //
 // !!! THIS TEST CREATES AND DESTROYS A REAL, BILLABLE NODEPING SUBACCOUNT !!!
 //
-// It runs only when TF_ACC=1 and NODEPING_API_TOKEN are both set, and it must
-// be pointed at a dedicated test account — never a client subaccount and never
-// the production account. The subaccount it creates is destroyed at the end of
-// the run, and destroying a subaccount destroys every check, contact and stored
-// result inside it.
+// It must be pointed at a dedicated test account — never a client subaccount
+// and never the parent account. The subaccount it creates is destroyed at the
+// end of the run, and destroying a subaccount destroys every check, contact and
+// stored result inside it.
 //
-// Build tag: this file is excluded from the default build because
-// github.com/hashicorp/terraform-plugin-testing is not yet a requirement in
-// go.mod. Once it is, drop the `acceptance` tag from the build constraint and
-// the Makefile target below; TF_ACC already gates execution on its own.
+// Build tag: this file is excluded from the default build, so `make test-acc`
+// does not create a subaccount. Run it deliberately with its own target:
 //
-//	go test -tags acceptance ./internal/resources/subaccount/ -run TestAccSubaccount -v
+//	make test-acc-subaccount
 //
-// Use `make test-acc`, which sets the four environment variables OpenTofu needs
-// (TF_ACC, TF_ACC_TERRAFORM_PATH, TF_ACC_PROVIDER_HOST, TF_ACC_PROVIDER_NAMESPACE).
+// An earlier version of this comment claimed the exclusion was temporary,
+// pending terraform-plugin-testing entering go.mod. That dependency landed, the
+// tag did not, and for a while the test ran as part of every acceptance run
+// with nothing but an environment variable standing between it and the parent
+// account. The tag is now permanent and the separation is the point: creating a
+// billable account is not something an ordinary test run should be able to do
+// by accident.
+//
 // TF_ACC_TERRAFORM_PATH must point at `tofu`; without it plugin-testing
-// downloads HashiCorp Terraform and tests the wrong binary.
+// downloads HashiCorp Terraform and tests the wrong binary. The make target
+// sets it along with the other three variables OpenTofu needs.
 
 package subaccount_test
 

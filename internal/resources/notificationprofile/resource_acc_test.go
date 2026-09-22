@@ -36,10 +36,16 @@ var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServe
 
 func testAccPreCheck(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{"NODEPING_API_TOKEN", "NODEPING_TEST_CONTACT_ID"} {
-		if os.Getenv(key) == "" {
-			t.Fatalf("%s must be set for acceptance tests", key)
-		}
+
+	// A missing token means the suite was not meant to run at all, which is an
+	// error. A missing fixture ID means this one test cannot run while the rest
+	// of the suite still can, which is a skip. Failing there would make the
+	// whole acceptance run unusable to anyone without every optional fixture.
+	if os.Getenv("NODEPING_API_TOKEN") == "" {
+		t.Fatal("NODEPING_API_TOKEN must be set for acceptance tests")
+	}
+	if os.Getenv("NODEPING_TEST_CONTACT_ID") == "" {
+		t.Skip("NODEPING_TEST_CONTACT_ID is not set; skipping the notification profile tests")
 	}
 }
 
