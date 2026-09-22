@@ -174,14 +174,19 @@ against the mapping functions to confirm the model goes null when the API omits 
 `invert`, `follow`, `ipv6`, `verify`, `dnsrd`, `oldresultfail`, `verifyvolume`) because
 NodePing's null-versus-`false` behaviour is unconfirmed; `secure`, which NodePing returns
 as both a boolean and a string; `homeloc` and `runlocations`, which NodePing assigns when
-unset; `tags`, whose planned value is written by `ModifyPlan` and so may not be
-non-Computed; `target`, `label`, and `customer_id`, which the API returns unconditionally;
+unset; `target`, `label`, and `customer_id`, which the API returns unconditionally;
 and `schedule.time1`/`time2` and `contactgroup.name`/`members`, whose mapping overwrites
 the model from the API regardless of plan. A wrong demotion costs a hard apply failure, so
 uncertainty resolves in favour of keeping Computed.
 
 **Mitigation for what remains:** to clear one of the still-Computed attributes, set it
 explicitly to its zero value rather than deleting the line.
+
+**Amended 2026-09-22 (SYS-79):** `tags` was on the kept-Computed list because `ModifyPlan`
+wrote a merged value into the plan. That was itself the bug recorded in A-020: Terraform
+rejects a planned value that does not match a known configuration value. With the merge
+moved to the new computed `tags_all`, `tags` carries nothing the API supplies and is now
+plain `Optional`, covered by the removal test table like the other twenty-four.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
 
@@ -400,22 +405,137 @@ reported every subaccount as the primary one. The document carries no check coun
 
 ---
 
-## A-019 — `GET /maintenance` wraps the windows, and the wrapper decides what is ad-hoc
+## A-019 — Every maintenance response keys the windows by ID, and the key is the only identifier
 
-**Assumption:** `GET /maintenance` returns `customer_id`, `schedules` and `ad-hoc` at the top
-level. Both groups are flattened into one ID-keyed map, and a window from the `ad-hoc` group is
-marked so `IsAdHoc` reports it regardless of the identifier it carries.
+**Assumption:** Four maintenance shapes exist and one decoder recognises all of them:
 
-**Why:** Confirmed with curl on two accounts. The previous code decoded the response as a bare
-ID-keyed map, so the data source failed on every account. `IsAdHoc` previously matched the
-identifier against the `ad-hoc` sentinel, which is what a create accepts, not what a listing
-returns: a live ad-hoc window has its own generated ID. The sentinel check is kept for the
-single-window `GET` and for the create response, which have no wrapper to consult.
+- `GET /maintenance` returns `customer_id`, `schedules` and `ad-hoc` at the top level. Both
+  groups are flattened into one ID-keyed map, and a window from the `ad-hoc` group is marked so
+  `IsAdHoc` reports it regardless of the identifier it carries.
+- `GET /maintenance/:id`, `POST /maintenance` and `PUT /maintenance/:id` all return the window
+  filed under its generated ID, beside the scalars `ok` and `message`.
+- A bare window document with no wrapper is still accepted.
 
-**Residual:** no account reachable by our token has a maintenance window, so both groups were
-observed empty. The wrapper is verified; the shape of the window objects inside it is not. They
-are still decoded with the existing `Maintenance` struct. A response keyed directly by window ID
-is still accepted, because decoding one as the wrapper would return an empty result and an empty
-result reads as "every window was deleted".
+The envelope key is the authoritative identifier and is stamped onto any window that arrives
+without one.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-21
+**Why:** The wrapper was confirmed with curl on two accounts, and the previous code decoded the
+listing as a bare ID-keyed map, so the data source failed on every account. `IsAdHoc` previously
+matched the identifier against the `ad-hoc` sentinel, which is what a create accepts, not what a
+listing returns: a live ad-hoc window has its own generated ID. The sentinel check is kept for
+the bare-document form, which has no wrapper to consult.
+
+The write and single-read paths were each decoding into a bare `Maintenance` and so found
+nothing. The consequences differed and all three were wrong: create failed with "API returned no
+id" *after* NodePing had created the window, leaking one per attempt; read found an empty
+document and reported not-found, which would have deleted the resource from state on every
+refresh; update silently returned a record carrying only the ID, writing an empty name, a zero
+duration and no checklist into state. Recognising the envelope in one shared decoder rather than
+per call site is what keeps these three from drifting apart again.
+
+An update that returns no window at all is now an error rather than a backfilled empty record,
+because a hollow window in state plans the real settings away on the next run.
+
+**Observed inner shape (2026-09-22, live):** a window carries `name`, `enabled`, `processing`,
+`cron`, `duration`, `history`, `nextrun`, `checklist` and `update`. `nextrun` is epoch
+milliseconds. Only the single-window `GET` includes an `id` inside the document; the listing,
+create and update responses do not, which is why the key has to be trusted. The earlier caveat
+that no reachable account had a window no longer applies.
+
+**Residual:** `history` was `{}` and `update.user` was `""` on every window observed, so neither
+is fully characterised — `MaintenanceRun` and the non-empty `update.user` form remain inferred
+from the documentation. No ad-hoc window was created during this work, so the `ad-hoc` group has
+still only been seen empty; its grouping behaviour is taken from the documentation.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-020 — `default_tags` is merged into a computed `tags_all`, not into `tags`
+
+**Assumption:** `nodeping_check.tags` holds only what the configuration declares and always
+matches it exactly. The provider's `default_tags` are merged into a new computed
+`tags_all`, and `tags_all` is the value sent to NodePing.
+
+**Why:** The first live acceptance run failed with "Provider produced invalid plan: planned
+value [managed-by-tofu, team-devops, tf-acc] does not match config value [team-devops]".
+Terraform requires the planned value of an attribute to equal a known configuration value,
+so `ModifyPlan` could not write a merged set into `tags` — the feature broke for any check
+that declared tags of its own, which is the normal case. Moving the merge into `Read` only
+converts the invalid plan into an inconsistent-result-after-apply, the same rule one step
+later. The `tags` / `tags_all` split is what the AWS provider does for this exact problem,
+and it is a user-visible schema change rather than a fix behind the scenes.
+
+**Consequence for reads:** NodePing only stores the merged set, so `Read` takes `tags_all`
+from the API and derives `tags` by removing the configured `default_tags`. A tag the
+practitioner declared that is also a default is kept in `tags`, decided by consulting prior
+state — subtracting the defaults blindly would drop it and plan its removal on every run.
+Import has no prior state and removes the defaults unconditionally.
+
+**Accepted limitation:** because the derivation depends on the *current* `default_tags`, a
+tag that was a default when the check was created and is later removed from the provider
+configuration becomes part of `tags` on the next refresh. That is the only reading available
+from the API response, and it is the conservative one: it keeps the tag on the check rather
+than silently deleting it.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-021 — Target equality follows the normalisation NodePing was observed to perform
+
+**Assumption:** `normalizeTarget` reproduces only the rewriting confirmed against the live
+API, per check type. Every type has surrounding whitespace trimmed. For `HTTP`, `HTTPADV`,
+`HTTPCONTENT`, `HTTPPARSE`, `SSL`, `AUDIO`, `MONGODB`, `PGSQL` and `REDIS` the scheme and
+host are folded to lower case, an empty path becomes `/`, and characters illegal in a path
+are percent-encoded. Everything else is left alone, including the port (a default port is
+kept), duplicate slashes, dot segments, userinfo, query and fragment.
+
+**Why:** The first live acceptance run failed an import round trip because NodePing stores
+`https://example.com` as `https://example.com/`. The previous `normalizeURL` trimmed a
+trailing slash from any target, which was both too loose and too broad: it treated
+`https://example.com/path/` and `https://example.com/path` as the same target when NodePing
+keeps them distinct, and it applied to check types the API does not normalise at all. Both
+directions are bugs — one hides a real change, the other reports one that does not exist.
+
+**Evidence:** every type in `ValidCheckTypes` was submitted to the live API in the test
+subaccount and the stored target read back. `WEBSOCKET`, `FTP`, `RDAP`, `SIP` and `WHOIS`
+accept a URL and store it verbatim, so scheme-shape alone cannot decide membership; the type
+list is explicit for that reason. `PING`, `PORT`, `DNS`, `RBL`, `SMTP` and `IMAP4` keep host
+case. Adding a check type to the list without re-running that probe would be a guess.
+
+**Not reproduced:** NodePing punycodes a non-ASCII host (`https://例え.com` is stored as
+`https://xn--r8jz45g.com/`), and its percent-encoding of non-ASCII path bytes was not
+characterised. Implementing the first would mean taking an IDNA dependency for a case that
+has not come up. A target using either is compared only as far as the rules above reach, so
+the provider reports a difference it could have collapsed. That direction is the safe one:
+it shows a diff that settles after one apply instead of hiding a real change.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-022 — An empty `customer_id` is rejected rather than treated as "no subaccount"
+
+**Assumption:** `customer_id = ""` is a configuration error. The attribute carries
+`stringvalidator.LengthAtLeast(1)`; a practitioner who wants the token's own account omits
+the attribute instead.
+
+**Why:** `clientFor` reads an empty string as "use the provider level client", so the check
+is created in whichever account the token belongs to. `mapForApply` preserves every value
+the plan already knew, so state keeps `""` while the API owns the check under a real account
+ID. The first refresh reads that ID back, and because `customer_id` carries
+`RequiresReplace` the disagreement is a destroy and recreate on every subsequent plan. Under
+resource identity the framework does not even get that far: it aborts the refresh with
+"Unexpected Identity Change", reported as a provider bug.
+
+**Evidence:** reproduced against the test subaccount with the validator removed. The
+post-apply refresh plan failed with the identity going from `customer_id: ""` to
+`customer_id: "20260922144954LK9ZD3"` on the same check ID.
+
+**Rejected alternative:** coercing an empty `customer_id` to the account the API reports.
+That silently rewrites a value the practitioner wrote, on an attribute that forces
+replacement, and it would make `customer_id = ""` mean something different depending on
+which token the provider was configured with.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
