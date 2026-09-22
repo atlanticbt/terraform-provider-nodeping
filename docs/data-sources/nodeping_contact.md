@@ -41,5 +41,5 @@ output "contact_role" {
   - `suppress_up` - Whether "up" notifications are suppressed.
   - `suppress_down` - Whether "down" notifications are suppressed.
   - `suppress_first` - Whether "first result" notifications are suppressed.
-  - `suppress_diag` - Whether diagnostic notifications are suppressed.
+  - `suppress_diag` - Always `false`. NodePing does not store this field on a contact address.
   - `suppress_all` - Whether all notifications are suppressed.

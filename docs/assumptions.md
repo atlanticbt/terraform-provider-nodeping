@@ -601,3 +601,109 @@ is a PUT, so the ID is known whether or not the call succeeded, and it is record
 failure once the request has been handed to the client.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-024 — `suppress_diag` accepts only `false`, because NodePing discards it
+
+**Assumption:** `suppress_diag = true` on a `nodeping_contact` address is a configuration
+error. The attribute remains in the schema and `false` is accepted, so existing
+configurations and state are unaffected.
+
+**Why:** NodePing accepts `suppressdiag` in a contact address payload, stores nothing, and
+never returns it. Every sibling flag — `suppressup`, `suppressdown`, `suppressfirst`,
+`suppressall` — round trips. The provider therefore planned `true` and read back `false`,
+and OpenTofu aborted the apply with "Provider produced inconsistent result after apply …
+This is a bug in the provider", which points the practitioner at the provider for a
+limitation of the upstream API.
+
+**Evidence:** `POST /contacts` with `suppressdiag: true` on email, SMS and webhook
+addresses, against the test subaccount. The created document omits the field in all three
+cases while a sibling flag sent in the same request comes back set. `PUT /contacts/:id`
+behaves the same. Reproduced through the provider before the validator existed:
+`TestAccContact_suppressDiagRejected`'s first step failed with `.address[0].suppress_diag:
+was cty.True, but now cty.False`.
+
+**Rejected alternative:** keeping the planned `true` in state. State would then claim a
+suppression that is not in effect, which is worse than refusing the value.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-025 — The contact `addresses` map is sent on every update, and a contact may not lose its last address
+
+**Assumption:** `ContactUpdateRequest.Addresses` carries no `omitempty`. An update that
+keeps no existing address sends `"addresses": {}`; an update to a contact that has no
+addresses and gains none sends `"addresses": null`. Reducing a contact to zero addresses is
+refused by the provider before the request is made.
+
+**Why:** NodePing treats `addresses` as the complete set and deletes anything missing from
+it. With `omitempty`, an update whose planned addresses were all new — replacing a contact's
+only email with an SMS, where nothing matches by content, ID or position — dropped the map
+from the request, so NodePing added the new address and kept the old one. The apply failed
+with "block count changed from 1 to 2" and the contact was left with an address the
+configuration had removed.
+
+The two empty forms are not interchangeable. `{}` is refused with "Account must have at
+least one 'owner' contact" whenever it would leave the contact empty, including on a
+contact that is already empty; `null` is read as "not specified" and leaves the addresses
+alone. So `{}` is sent only when `newaddresses` will repopulate the set.
+
+**Evidence:** probed against the test subaccount. `PUT` with `addresses: {}` and a
+`newaddresses` entry replaces the set; `PUT` with `addresses: {}` alone returns
+`{"error": "Account must have at least one 'owner' contact."}` whether or not the contact
+currently has addresses; `PUT` with `addresses: null` succeeds and preserves them.
+
+**Rejected alternative:** letting the API refuse the zero-address update. The practitioner
+would read a message about account owners, followed by an inconsistent-result error naming
+the provider, for what is simply an operation NodePing does not support.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-026 — A contact with no name is null in state, not an empty string
+
+**Assumption:** `Read` and `ImportState` map an absent or empty NodePing contact name to
+`types.StringNull()`.
+
+**Why:** `name` is Optional and not Computed, so a contact created without one holds null
+in state. NodePing omits the `name` key entirely for such a contact, and writing the
+resulting `""` back made every refresh plan an update from null to `""`. No apply could
+settle it: the create request drops an empty name (`omitempty`), so the API never gains the
+value the plan is asking for.
+
+**Evidence:** `POST /contacts` without `name` returns a document with no `name` key.
+Through the provider, the post-apply refresh plan was non-empty on every run;
+`TestAccContact_withoutName` is the regression test and its `PlanOnly` step is the
+assertion.
+
+**Limitation:** `name = ""` written explicitly is now indistinguishable from an absent name
+and will still diff. NodePing has no way to store an empty name, so there is nothing for the
+provider to make that configuration mean.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-027 — An imported contact's address order is not the configuration's
+
+**Assumption:** the acceptance tests verify an imported contact's `address` blocks with
+`ImportStateCheck` against the set of blocks apply wrote, and exclude `address` from
+`ImportStateVerify`.
+
+**Why:** NodePing returns addresses as a map keyed by a server-assigned ID. With no plan to
+follow, `mapAddressesToModel` orders them by that ID, which is random per address, while an
+apply orders them as the configuration does. `ImportStateVerify` compares by list position,
+so it would pass or fail on which IDs NodePing happened to issue — a flaky test rather than
+a real signal. The set comparison asserts the stronger property anyway: every block,
+including its server-assigned ID, comes back from the API unchanged.
+
+**Consequence for practitioners:** the first plan after importing a contact with more than
+one address may show the blocks being reordered. The apply is a no-op at the API — the
+provider matches addresses by content, so no ID moves — and the next plan is empty. Sorting
+cannot fix this; no ordering derivable from the API response can match an arbitrary
+configuration order.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22

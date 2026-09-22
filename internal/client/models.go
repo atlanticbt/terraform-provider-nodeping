@@ -111,9 +111,16 @@ type ContactCreateRequest struct {
 }
 
 type ContactUpdateRequest struct {
-	Name         string                    `json:"name,omitempty"`
-	CustRole     string                    `json:"custrole,omitempty"`
-	Addresses    map[string]ContactAddress `json:"addresses,omitempty"`
+	Name     string `json:"name,omitempty"`
+	CustRole string `json:"custrole,omitempty"`
+	// Addresses deliberately omits `omitempty`. NodePing treats the map as the
+	// complete address set and deletes anything left out of it, so an update
+	// that moves every address into newaddresses has to send an explicit `{}`
+	// or the old addresses survive alongside the new ones. A nil map still
+	// marshals to `null`, which NodePing reads as "not specified" and leaves
+	// the addresses alone; `{}` is refused outright when it would empty the
+	// contact.
+	Addresses    map[string]ContactAddress `json:"addresses"`
 	NewAddresses []NewAddress              `json:"newaddresses,omitempty"`
 }
 

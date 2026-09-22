@@ -1151,3 +1151,176 @@ func TestUpdateSendsExplicitUnmute(t *testing.T) {
 		t.Fatalf("mute = %v, want false", mute)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// live run findings -- the address set is a full replacement, and an absent
+// name is absent
+// ---------------------------------------------------------------------------
+
+// NodePing deletes any address left out of the `addresses` map. When every
+// planned address is new -- swapping the only email for an SMS, say -- the map
+// is empty and `omitempty` dropped it from the request, so NodePing added the
+// new address and kept the old one. The apply then failed with "block count
+// changed from 1 to 2".
+func TestUpdateSendsEmptyAddressMapWhenEveryAddressIsNew(t *testing.T) {
+	ctx := context.Background()
+
+	var raw map[string]json.RawMessage
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Errorf("bad request body: %v", err)
+		}
+		w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
+			"N9": apiAddr("sms", "+15555550120"),
+		}))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringValue("Example"),
+		CustRole:   types.StringValue("notify"),
+		Addresses:  []AddressModel{addrModel("A1", "email", "a@example.com")},
+	}
+
+	plan := state
+	plan.Addresses = []AddressModel{addrModel("", "sms", "+15555550120")}
+
+	resp := &resource.UpdateResponse{State: emptyState(t, ctx, &state)}
+	r.Update(ctx, resource.UpdateRequest{Plan: emptyPlan(t, ctx, plan), State: emptyState(t, ctx, &state)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update diagnostics: %v", resp.Diagnostics)
+	}
+
+	addresses, present := raw["addresses"]
+	if !present {
+		t.Fatalf("addresses was omitted, so the replaced address would survive: %v", raw)
+	}
+	if string(addresses) != "{}" {
+		t.Fatalf("addresses = %s, want an empty object", addresses)
+	}
+}
+
+// Reducing a contact to zero addresses is refused by NodePing with "Account
+// must have at least one 'owner' contact", and the request leaves the addresses
+// in place. Catching it before the call turns an unrelated-sounding API message
+// followed by "block count changed from 0 to 1" into one accurate diagnostic.
+func TestUpdateRejectsRemovingEveryAddress(t *testing.T) {
+	ctx := context.Background()
+
+	called := false
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		called = true
+		w.Write(contactJSON("C1", "CUST1", "Example", nil))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringValue("Example"),
+		CustRole:   types.StringValue("notify"),
+		Addresses:  []AddressModel{addrModel("A1", "email", "a@example.com")},
+	}
+
+	plan := state
+	plan.Addresses = nil
+
+	resp := &resource.UpdateResponse{State: emptyState(t, ctx, &state)}
+	r.Update(ctx, resource.UpdateRequest{Plan: emptyPlan(t, ctx, plan), State: emptyState(t, ctx, &state)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when every address is removed")
+	}
+	if called {
+		t.Error("the API was called for an update NodePing cannot perform")
+	}
+	if summary := resp.Diagnostics.Errors()[0].Summary(); summary != "Cannot Remove Every Contact Address" {
+		t.Errorf("unexpected diagnostic summary %q", summary)
+	}
+}
+
+// A contact that has no addresses and is gaining none must not send an empty
+// `addresses` object: NodePing refuses that too. A nil map marshals to null,
+// which it reads as "not specified".
+func TestUpdateOmitsAddressMapWhenContactHasNoAddresses(t *testing.T) {
+	ctx := context.Background()
+
+	var raw map[string]json.RawMessage
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		json.Unmarshal(body, &raw)
+		w.Write(contactJSON("C1", "CUST1", "Renamed", nil))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringValue("Example"),
+		CustRole:   types.StringValue("notify"),
+	}
+
+	plan := state
+	plan.Name = types.StringValue("Renamed")
+
+	resp := &resource.UpdateResponse{State: emptyState(t, ctx, &state)}
+	r.Update(ctx, resource.UpdateRequest{Plan: emptyPlan(t, ctx, plan), State: emptyState(t, ctx, &state)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update diagnostics: %v", resp.Diagnostics)
+	}
+
+	if string(raw["addresses"]) != "null" {
+		t.Fatalf("addresses = %s, want null", raw["addresses"])
+	}
+}
+
+// A contact created without a name comes back with no name field at all.
+// Writing the empty string into an Optional, non-Computed attribute made every
+// refresh plan an update from null to "" that no apply could settle.
+func TestReadMapsAnAbsentNameToNull(t *testing.T) {
+	ctx := context.Background()
+
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Write(contactJSON("C1", "CUST1", "", map[string]client.ContactAddress{
+			"A1": apiAddr("email", "a@example.com"),
+		}))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringNull(),
+		CustRole:   types.StringValue("notify"),
+		Addresses:  []AddressModel{addrModel("A1", "email", "a@example.com")},
+	}
+
+	resp := &resource.ReadResponse{State: emptyState(t, ctx, &state)}
+	r.Read(ctx, resource.ReadRequest{State: emptyState(t, ctx, &state)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read diagnostics: %v", resp.Diagnostics)
+	}
+
+	if got := decodeState(t, ctx, resp.State); !got.Name.IsNull() {
+		t.Fatalf("name = %q, want null", got.Name.ValueString())
+	}
+}
+
+func TestImportStateMapsAnAbsentNameToNull(t *testing.T) {
+	ctx := context.Background()
+
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Write(contactJSON("C1", "CUST1", "", map[string]client.ContactAddress{
+			"A1": apiAddr("email", "a@example.com"),
+		}))
+	})
+
+	resp := &resource.ImportStateResponse{State: emptyState(t, ctx, nil)}
+	r.ImportState(ctx, resource.ImportStateRequest{ID: "C1"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("import diagnostics: %v", resp.Diagnostics)
+	}
+
+	if got := decodeState(t, ctx, resp.State); !got.Name.IsNull() {
+		t.Fatalf("name = %q, want null", got.Name.ValueString())
+	}
+}

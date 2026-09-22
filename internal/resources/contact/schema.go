@@ -201,10 +201,14 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 							Default:     booldefault.StaticBool(false),
 						},
 						"suppress_diag": schema.BoolAttribute{
-							Description: "Suppress diagnostic notifications to this address.",
-							Optional:    true,
-							Computed:    true,
-							Default:     booldefault.StaticBool(false),
+							Description: "Suppress diagnostic notifications to this address. " +
+								"NodePing discards this field rather than storing it, so only false is accepted.",
+							Optional: true,
+							Computed: true,
+							Default:  booldefault.StaticBool(false),
+							Validators: []validator.Bool{
+								SuppressDiagValidator(),
+							},
 						},
 						"suppress_all": schema.BoolAttribute{
 							Description: "Suppress all notifications to this address.",
