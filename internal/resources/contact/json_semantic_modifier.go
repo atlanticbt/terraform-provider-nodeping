@@ -16,11 +16,16 @@ import (
 //
 // It provides *semantic equality*: two values are considered equal when both
 // are valid JSON documents that are structurally identical, regardless of
-// whitespace, key ordering, or number formatting. Unlike a plan modifier,
-// semantic equality is applied by the framework both when computing a plan and
-// when checking apply consistency, so a value that the API returns in a
-// different-but-equivalent encoding does not produce a "Provider produced
-// inconsistent result after apply" error or a phantom diff.
+// whitespace, key ordering, or number formatting. A value that the API returns
+// in a different-but-equivalent encoding therefore does not produce a "Provider
+// produced inconsistent result after apply" error or a phantom diff on refresh.
+//
+// Semantic equality is not sufficient on its own. The framework applies it from
+// ReadResource, Create, Update and ReadDataSource, and from neither
+// PlanResourceChange nor ImportResourceState, so it can only collapse a
+// returned value onto a prior one that already holds the configuration's
+// encoding. A first import has no such prior value. JSONSemanticPlanModifier in
+// json_plan_modifier.go covers that case; the two work together.
 //
 // Note this deliberately does *not* use jsontypes.Normalized: the NodePing
 // `data` field is an arbitrary webhook request body which is frequently not

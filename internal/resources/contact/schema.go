@@ -248,6 +248,9 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 								"key ordering differences between the configuration and the API do not produce a diff.",
 							Optional:   true,
 							CustomType: JSONStringType{},
+							PlanModifiers: []planmodifier.String{
+								JSONSemanticPlanModifier(),
+							},
 						},
 						"priority": schema.Int64Attribute{
 							Description: "Priority for Pushover addresses. Valid values: -2 to 2.",
