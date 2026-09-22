@@ -114,6 +114,43 @@ func TestWarningDaysAcceptsTheValuesTheAPIReturns(t *testing.T) {
 	}
 }
 
+// An empty customer_id used to be accepted and then written to state verbatim,
+// because clientFor treats it as "no subaccount" while mapForApply keeps every
+// known planned value. The check was created in whichever account the token
+// belongs to, the next refresh read that account's real ID back, and the
+// resulting drift forced a replacement on every plan. See A-022.
+func TestCustomerIDRejectsTheEmptyString(t *testing.T) {
+	ctx := testContext()
+	attribute, ok := CheckSchema().Attributes["customer_id"].(schema.StringAttribute)
+	if !ok {
+		t.Fatal("customer_id is not a string attribute")
+	}
+
+	cases := []struct {
+		name      string
+		value     string
+		wantError bool
+	}{
+		{"empty", "", true},
+		{"account id", "20260922144954LK9ZD3", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &validator.StringResponse{}
+			for _, v := range attribute.Validators {
+				v.ValidateString(ctx, validator.StringRequest{
+					Path:        path.Root("customer_id"),
+					ConfigValue: types.StringValue(tc.value),
+				}, resp)
+			}
+			if got := resp.Diagnostics.HasError(); got != tc.wantError {
+				t.Errorf("customer_id %q: error = %v, want %v (%v)", tc.value, got, tc.wantError, resp.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestSchemaPlanModifiers(t *testing.T) {
 	s := CheckSchema()
 

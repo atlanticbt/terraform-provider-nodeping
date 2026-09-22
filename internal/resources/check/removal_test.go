@@ -44,6 +44,11 @@ var optionalOnlyAttributes = map[string]bool{
 	"whoisserver":    true,
 	"rdapurl":        true,
 	"ignore":         true,
+	// tags holds only what the practitioner wrote. The merged set NodePing
+	// actually stores lives in the computed tags_all, so tags carries no
+	// server-supplied value and must stay Optional-only for a removal to reach
+	// the API.
+	"tags": true,
 }
 
 // removableAttribute describes one attribute the practitioner can delete from
@@ -86,6 +91,10 @@ func removableAttributes(t *testing.T) []removableAttribute {
 	})
 	if diags.HasError() {
 		t.Fatalf("could not build hosts: %v", diags)
+	}
+	tags, diags := types.SetValueFrom(context.Background(), types.StringType, []string{"prod"})
+	if diags.HasError() {
+		t.Fatalf("could not build tags: %v", diags)
 	}
 
 	str := func(name, apiKey, value string, set func(*CheckResourceModel, types.String), get func(CheckResourceModel) types.String) removableAttribute {
@@ -196,6 +205,21 @@ func removableAttributes(t *testing.T) []removableAttribute {
 			apiKey: "hosts",
 			set:    func(m *CheckResourceModel) { m.Hosts = hosts },
 			get:    func(m CheckResourceModel) attr.Value { return m.Hosts },
+		},
+		{
+			// tags is the one removable attribute the provider does not send
+			// directly: ModifyPlan merges it with default_tags into tags_all
+			// and that is what reaches the API, so the fixture sets both the
+			// way a real plan would.
+			// equalJSON cannot compare slices, so like fields and hosts this
+			// entry asserts presence and absence rather than an exact payload.
+			name:   "tags",
+			apiKey: "tags",
+			set: func(m *CheckResourceModel) {
+				m.Tags = tags
+				m.TagsAll = tags
+			},
+			get: func(m CheckResourceModel) attr.Value { return m.Tags },
 		},
 	}
 }
@@ -333,6 +357,12 @@ func clearAttribute(t *testing.T, m *CheckResourceModel, a removableAttribute) {
 		setNullString(m, a.name)
 	case types.Map:
 		setNullMap(m, a.name)
+	case types.Set:
+		// Clearing tags must clear tags_all too: with no configured tags and no
+		// default_tags, ModifyPlan plans an empty merged set, and leaving the
+		// prior tags_all in place would keep sending the removed tag.
+		m.Tags = types.SetNull(types.StringType)
+		m.TagsAll = types.SetNull(types.StringType)
 	default:
 		t.Fatalf("no null form defined for %s (%T)", a.name, current)
 	}
@@ -416,7 +446,7 @@ func TestServerDefaultedAttributes_keepPriorStateOnRemoval(t *testing.T) {
 	// Documented NodePing defaults, plus the values the API derives.
 	serverDefaulted := []string{
 		"target", "label", "enabled", "public", "interval", "threshold", "sens",
-		"mute", "autodiag", "runlocations", "homeloc", "tags", "regex", "invert",
+		"mute", "autodiag", "runlocations", "homeloc", "regex", "invert",
 		"follow", "method", "statuscode", "port", "secure", "verify", "ipv6",
 		"dnstype", "dnssection", "dnsrd", "transport", "warningdays", "snmpv",
 		"snmpcom", "redistype", "dohdot", "oldresultfail", "verifyvolume",

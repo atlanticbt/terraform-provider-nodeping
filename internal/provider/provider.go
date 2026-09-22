@@ -130,11 +130,13 @@ resource "nodeping_check" "example" {
   type   = "HTTP"
   target = "https://example.com"
   label  = "Example Check"
-  tags   = ["production"]  # Will be merged with default_tags
+  tags   = ["production"]
 }
 ` + "```" + `
 
-The resulting check will have tags: ` + "`[\"managed-by-terraform\", \"team-devops\", \"production\"]`" + `. Duplicate tags are automatically removed.
+The check is created with ` + "`[\"managed-by-terraform\", \"team-devops\", \"production\"]`" + `. Duplicates are removed.
+
+The merged set is exposed as the check's computed ` + "`tags_all`" + `. Its ` + "`tags`" + ` argument keeps exactly what the configuration declares, because Terraform requires an optional argument's planned value to match the configuration. Reference ` + "`tags_all`" + ` when you need the set NodePing actually stores.
 `,
 		Attributes: map[string]schema.Attribute{
 			"api_token": schema.StringAttribute{

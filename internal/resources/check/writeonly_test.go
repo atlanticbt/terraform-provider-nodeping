@@ -207,7 +207,7 @@ func TestRead_neverCopiesTheAPIPasswordIntoState(t *testing.T) {
 
 	// Import: nothing is known beforehand, so the credential must simply be
 	// absent rather than picked up from the response.
-	imported := mapForRead(ctx, check, nil, &diags)
+	imported := mapForRead(ctx, check, nil, nil, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -220,7 +220,7 @@ func TestRead_neverCopiesTheAPIPasswordIntoState(t *testing.T) {
 
 	// Refresh: the deprecated attribute keeps whatever state already held.
 	prior := &CheckResourceModel{Password: types.StringValue("configured")}
-	refreshed := mapForRead(ctx, check, prior, &diags)
+	refreshed := mapForRead(ctx, check, prior, nil, &diags)
 	if refreshed.Password.ValueString() != "configured" {
 		t.Fatalf("refresh should keep the prior password, got %q", refreshed.Password.ValueString())
 	}
@@ -242,7 +242,7 @@ func TestRead_doesNotPersistRedisHostPasswords(t *testing.T) {
 		},
 	}
 
-	imported := mapForRead(ctx, check, nil, &diags)
+	imported := mapForRead(ctx, check, nil, nil, &diags)
 	if diags.HasError() {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
