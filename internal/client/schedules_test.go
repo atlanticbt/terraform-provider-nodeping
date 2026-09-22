@@ -109,8 +109,8 @@ func TestScheduleUnmarshal_AcceptsDocumentedShape(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if s.ID != "Days" || s.CustomerID != "CUST1" {
-		t.Fatalf("got id=%q customer=%q", s.ID, s.CustomerID)
+	if s.CustomerID != "CUST1" {
+		t.Fatalf("got customer=%q", s.CustomerID)
 	}
 	monday := s.Data["monday"]
 	if monday.Time1 != "6:00" || monday.Time2 != "18:00" || !monday.Exclude.Bool() {
@@ -125,11 +125,32 @@ func TestScheduleUnmarshal_AcceptsMongoStyleIDAndBareDayMap(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if s.ID != "Days" || s.CustomerID != "CUST2" {
-		t.Fatalf("got id=%q customer=%q", s.ID, s.CustomerID)
+	if s.CustomerID != "CUST2" {
+		t.Fatalf("got customer=%q", s.CustomerID)
 	}
 	if !s.Data["monday"].AllDay.Bool() {
 		t.Fatalf("expected monday allday, got %+v", s.Data)
+	}
+}
+
+// PUT /schedules/:id answers with the account ID in its `id` field, and
+// GET /schedules/:id returns no identifier at all. Decoding a body must
+// therefore never produce a schedule ID.
+func TestScheduleUnmarshal_NeverTakesTheIDFromTheBody(t *testing.T) {
+	bodies := []string{
+		`{"id":"20260922144954LK9ZD3","data":{"monday":{"allday":true}}}`,
+		`{"_id":"20260922144954LK9ZD3","monday":{"allday":true}}`,
+		`{"ok":true,"id":"20260922144954LK9ZD3"}`,
+	}
+
+	for _, body := range bodies {
+		var s Schedule
+		if err := json.Unmarshal([]byte(body), &s); err != nil {
+			t.Fatalf("body %s: unexpected error: %v", body, err)
+		}
+		if s.ID != "" {
+			t.Fatalf("body %s: decoded ID %q; the identifier must come from the caller", body, s.ID)
+		}
 	}
 }
 
@@ -255,6 +276,22 @@ func TestListSchedules_FillsIDFromMapKey(t *testing.T) {
 	}
 }
 
+func TestListSchedules_KeepsTheMapKeyWhenTheEntryReportsAnotherID(t *testing.T) {
+	c := newScheduleTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, `{"Days":{"id":"20260922144954LK9ZD3","data":{"monday":{"allday":true}}}}`); err != nil {
+			t.Errorf("write failed: %v", err)
+		}
+	})
+
+	got, err := c.ListSchedules(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got["Days"].ID != "Days" {
+		t.Fatalf("the map key must win, got %q", got["Days"].ID)
+	}
+}
+
 func TestListSchedules_ReturnsEmptyMapForEmptyAccount(t *testing.T) {
 	c := newScheduleTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -305,6 +342,22 @@ func TestGetSchedule_ReturnsSchedule(t *testing.T) {
 	}
 	if got.Data["monday"].Time2 != "18:00" {
 		t.Fatalf("unexpected data %+v", got.Data)
+	}
+}
+
+func TestGetSchedule_KeepsThePathIDWhenTheResponseReportsAnotherID(t *testing.T) {
+	c := newScheduleTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, `{"id":"20260922144954LK9ZD3","data":{"monday":{"allday":true}}}`); err != nil {
+			t.Errorf("write failed: %v", err)
+		}
+	})
+
+	got, err := c.GetSchedule(context.Background(), "Days")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != "Days" {
+		t.Fatalf("the requested ID must win, got %q", got.ID)
 	}
 }
 
@@ -459,6 +512,25 @@ func TestPutSchedule_OverridesAMismatchedBodyID(t *testing.T) {
 	// A bare acknowledgement carries no data; the caller keeps its own values.
 	if got.ID != "Days" || len(got.Data) != 0 {
 		t.Fatalf("unexpected schedule %+v", got)
+	}
+}
+
+// Regression: the live PUT acknowledgement is {"ok":true,"id":"<account id>"}.
+// Folding that body over the schedule replaced the caller's ID with the account
+// ID, which OpenTofu rejected as an inconsistent result after apply.
+func TestPutSchedule_KeepsThePathIDWhenTheResponseReportsTheAccountID(t *testing.T) {
+	c := newScheduleTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.WriteString(w, `{"ok":true,"id":"20260922144954LK9ZD3"}`); err != nil {
+			t.Errorf("write failed: %v", err)
+		}
+	})
+
+	got, err := c.PutSchedule(context.Background(), "tfacc-47466", SchedulePutRequest{Data: businessHours()})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != "tfacc-47466" {
+		t.Fatalf("the path ID must win, got %q", got.ID)
 	}
 }
 
