@@ -111,6 +111,10 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	// NodePing owns a check from here on. Every step below can still fail and
+	// return, so the identifier reaches state before any of them do.
+	defer recordCreatedID(ctx, resp, check.ID, plan.CustomerID)
+
 	result := mapForApply(ctx, check, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return

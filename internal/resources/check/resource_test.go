@@ -911,6 +911,84 @@ func TestCreate_PreservesPasswordAndNormalisedValues(t *testing.T) {
 	}
 }
 
+func TestCreate_RecordsTheCheckIDWhenTheResponseCannotBeMapped(t *testing.T) {
+	ctx := testContext()
+	api := newMockAPI(t)
+	// The POST succeeded, so the check exists. Only the mapping of the response
+	// into state fails, on a threshold NodePing reported as a non-numeric
+	// string. Returning that error without writing state would leave the check
+	// running in NodePing with nothing in the state file pointing at it.
+	api.transform = func(body map[string]interface{}, stored map[string]interface{}) {
+		stored["parameters"].(map[string]interface{})["threshold"] = "not-a-number"
+	}
+	r := api.resource()
+
+	resp := &resource.CreateResponse{State: emptyState(ctx), Identity: newIdentity(t, ctx, nil)}
+	r.Create(ctx, newCreateRequest(t, ctx, baseModel()), resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the unmappable response to be reported")
+	}
+
+	got := stateModel(t, ctx, resp.State)
+	if got.ID.ValueString() != "MOCK-CHECK-1" {
+		t.Fatalf("state must carry the check ID so the next plan can reconcile it, got %q", got.ID.ValueString())
+	}
+	// customer_id was never configured, so it stays null and Read falls back to
+	// the provider-level client -- the same scope the create used.
+	if !got.CustomerID.IsNull() {
+		t.Errorf("customer_id must stay null when it was not configured, got %v", got.CustomerID)
+	}
+	if !resp.Identity.Raw.IsFullyNull() {
+		t.Errorf("identity must stay null on a failed create, got %v", resp.Identity.Raw)
+	}
+}
+
+func TestCreate_RecordsTheConfiguredCustomerIDAlongsideTheCheckID(t *testing.T) {
+	ctx := testContext()
+	api := newMockAPI(t)
+	api.transform = func(body map[string]interface{}, stored map[string]interface{}) {
+		stored["parameters"].(map[string]interface{})["threshold"] = "not-a-number"
+	}
+	r := api.resource()
+
+	plan := baseModel()
+	plan.CustomerID = types.StringValue("SUBACC1")
+
+	resp := &resource.CreateResponse{State: emptyState(ctx)}
+	r.Create(ctx, newCreateRequest(t, ctx, plan), resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the unmappable response to be reported")
+	}
+
+	// Read scopes its lookup with customer_id, so the partial state has to
+	// carry the subaccount the check was created in.
+	got := stateModel(t, ctx, resp.State)
+	if got.CustomerID.ValueString() != "SUBACC1" {
+		t.Fatalf("state must carry the configured customer_id, got %q", got.CustomerID.ValueString())
+	}
+}
+
+func TestCreate_WritesNoStateWhenTheAPICallFails(t *testing.T) {
+	ctx := testContext()
+	api := newMockAPI(t)
+	api.notFound = true
+	r := api.resource()
+
+	resp := &resource.CreateResponse{State: emptyState(ctx)}
+	r.Create(ctx, newCreateRequest(t, ctx, baseModel()), resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the failed create to be reported")
+	}
+	// No ID came back, so there is nothing to record. State must stay empty
+	// rather than gain an object OpenTofu would then try to manage.
+	if !resp.State.Raw.IsNull() {
+		t.Fatalf("state must stay empty when the create itself failed, got %v", resp.State.Raw)
+	}
+}
+
 func TestCreate_ContentStringPreservedSymmetrically(t *testing.T) {
 	ctx := testContext()
 	api := newMockAPI(t)

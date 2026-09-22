@@ -539,3 +539,65 @@ replacement, and it would make `customer_id = ""` mean something different depen
 which token the provider was configured with.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-023 — A Create that fails after the API call records the identifier before returning the error
+
+**Assumption:** when NodePing has already created an object and the provider is about to
+return an error from `Create`, the provider writes the object's identifier into state and
+still returns the error. It does not write the planned values, and it does not write
+identity data.
+
+**Why:** every `Create` has the same shape — call the API, do some more work, then
+`resp.State.Set`. Anything that returns in between leaves an object that exists in NodePing
+and in no state file, so OpenTofu cannot refresh it, cannot destroy it, and will create a
+second one on the next apply. Three `nodeping_schedule` objects and five
+`nodeping_maintenance` objects were deleted by hand during acceptance testing for exactly
+this reason. `nodeping_subaccount` is the sharpest case: the POST creates a billable
+account and two more API calls follow before state is written.
+
+**Evidence that partial state survives:** terraform-plugin-framework v1.19.0
+(`internal/fwserver/server_createresource.go`) only rejects a null create state when there
+are no error diagnostics, and it skips its identity checks on the error path entirely.
+OpenTofu's apply (`internal/tofu/node_resource_abstract_instance.go`) saves whatever
+non-null object the provider returned when apply reported errors — the
+`diags.HasErrors() && !newVal.IsNull()` branch — and skips `AssertObjectCompatible` in the
+same situation, so required attributes left null are accepted. The unit tests in
+`check`, `schedule` and `subaccount` assert the identifier is in `resp.State` after a
+forced post-create failure.
+
+**Why only the identifier:** OpenTofu converts any unknown left in an applied object to
+null and reports each one as a provider bug. The planned model routinely carries unknowns
+for computed attributes, so writing it would produce a page of spurious errors on top of
+the real one. `customer_id` is written alongside the ID where the practitioner configured
+it, because `Read` needs it to scope the lookup to the right subaccount; where it was not
+configured, the object lives in the token's own account and null says the same thing.
+
+**Why identity is left null:** `customer_id` is often still unknown on this path. An
+identity that disagrees with the one the next `Read` derives is rejected by the framework
+as "Unexpected Identity Change" (`server_readresource.go`), which would block the recovery
+the partial state exists to enable. That check is skipped when the stored identity is fully
+null, and `Read` populates it on the next refresh.
+
+**Where it is not applied, and why:** `contact`, `contactgroup`, `maintenance` and
+`notificationprofile` have no reachable window. `notificationprofile.Create` has no early
+return at all between the API call and `State.Set`. In the other three the only step in
+between converts plain Go slices and maps into framework collections
+(`types.SetValueFrom` / `types.MapValueFrom` over `[]string` / `map[string]string`), which
+cannot produce a diagnostic for any response the client will return. Adding the guard there
+would be code that can never run. If a step that can fail is ever added to one of those
+`Create` methods, it needs the same treatment.
+
+**Limitation — the identifier is not always knowable.** When the create call itself returns
+an error, the provider has no ID: for `check`, `contact`, `contactgroup`, `maintenance`,
+`notificationprofile` and `subaccount` the ID exists only in the response body, so a request
+that reached NodePing and was applied but whose response was lost or could not be decoded
+still orphans the object. Nothing in the API offers an idempotency key or a
+create-with-caller-supplied-ID form for these types, and looking the object up by name after
+a failure would be a guess at which of several similarly named objects was the new one.
+`nodeping_schedule` is the exception: its ID is chosen by the practitioner and the endpoint
+is a PUT, so the ID is known whether or not the call succeeded, and it is recorded on any
+failure once the request has been handed to the client.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22

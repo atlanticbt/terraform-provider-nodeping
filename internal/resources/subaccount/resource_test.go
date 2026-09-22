@@ -407,7 +407,7 @@ func TestCreateReportsAPIFailure(t *testing.T) {
 	}
 }
 
-func TestCreateReportsOrphanWhenFollowUpPutFails(t *testing.T) {
+func TestCreateRecordsTheAccountIDWhenTheFollowUpPutFails(t *testing.T) {
 	ctx := context.Background()
 	r := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPost {
@@ -422,17 +422,24 @@ func TestCreateReportsOrphanWhenFollowUpPutFails(t *testing.T) {
 	plan := planModel()
 	plan.Status = types.StringValue("Suspend")
 
-	resp := &resource.CreateResponse{State: emptyState(t, ctx, nil)}
+	resp := &resource.CreateResponse{State: emptyState(t, ctx, nil), Identity: newIdentity(t, ctx, nil)}
 	r.Create(ctx, resource.CreateRequest{Plan: emptyPlan(t, ctx, plan)}, resp)
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected an error")
 	}
-	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "terraform import") {
-		t.Errorf("the diagnostic must tell the operator how to recover the orphan: %v", resp.Diagnostics)
+
+	// The POST created a real, billable account. It must not be left with
+	// nothing in state pointing at it.
+	got := decodeState(t, ctx, resp.State)
+	if got.ID.ValueString() != accountID {
+		t.Fatalf("state must carry the account ID so the next plan can reconcile it, got %q", got.ID.ValueString())
+	}
+	if !resp.Identity.Raw.IsFullyNull() {
+		t.Errorf("identity must stay null on a failed create, got %v", resp.Identity.Raw)
 	}
 }
 
-func TestCreateReportsReadBackFailure(t *testing.T) {
+func TestCreateRecordsTheAccountIDWhenTheReadBackFails(t *testing.T) {
 	ctx := context.Background()
 	r := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		if req.Method == http.MethodPost {
@@ -451,6 +458,30 @@ func TestCreateReportsReadBackFailure(t *testing.T) {
 	}
 	if !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), "Error Reading Created Subaccount") {
 		t.Errorf("unexpected diagnostic: %v", resp.Diagnostics)
+	}
+
+	got := decodeState(t, ctx, resp.State)
+	if got.ID.ValueString() != accountID {
+		t.Fatalf("state must carry the account ID so the next plan can reconcile it, got %q", got.ID.ValueString())
+	}
+}
+
+func TestCreateWritesNoStateWhenTheAccountWasNeverCreated(t *testing.T) {
+	ctx := context.Background()
+	r := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid location"}`))
+	})
+
+	resp := &resource.CreateResponse{State: emptyState(t, ctx, nil)}
+	r.Create(ctx, resource.CreateRequest{Plan: emptyPlan(t, ctx, planModel())}, resp)
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error")
+	}
+	// No account ID came back, so there is nothing to record and state must
+	// stay empty rather than gain an object OpenTofu would try to manage.
+	if !resp.State.Raw.IsNull() {
+		t.Fatalf("state must stay empty when no account was created, got %v", resp.State.Raw)
 	}
 }
 

@@ -74,8 +74,15 @@ func (r *ScheduleResource) Create(ctx context.Context, req resource.CreateReques
 		"id": plan.ID.ValueString(),
 	})
 
-	r.put(ctx, &plan, "Creating", &resp.Diagnostics)
+	sent := r.put(ctx, &plan, "Creating", &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
+		if sent {
+			// The ID is the one the practitioner chose and the endpoint is a
+			// PUT, so it is known even when the call failed. If NodePing stored
+			// the schedule the next plan can now reconcile or destroy it; if the
+			// request never landed, the next Read finds nothing and drops it.
+			recordCreatedID(ctx, resp, plan.ID.ValueString(), plan.CustomerID)
+		}
 		return
 	}
 
@@ -269,7 +276,11 @@ func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportS
 // put issues the create-or-update PUT and folds the response back into the
 // plan. The schedules endpoint has no POST, so Create and Update are the same
 // call.
-func (r *ScheduleResource) put(ctx context.Context, plan *ScheduleResourceModel, action string, diags *diag.Diagnostics) {
+//
+// sent reports whether the request was handed to the client, which Create needs
+// in order to decide whether NodePing may now be holding a schedule it has to
+// record. A rejection before that point leaves nothing behind.
+func (r *ScheduleResource) put(ctx context.Context, plan *ScheduleResourceModel, action string, diags *diag.Diagnostics) (sent bool) {
 	putReq := client.SchedulePutRequest{
 		ID:   plan.ID.ValueString(),
 		Data: daysFromModel(plan),
@@ -280,7 +291,7 @@ func (r *ScheduleResource) put(ctx context.Context, plan *ScheduleResourceModel,
 			"Error "+action+" Schedule",
 			"A schedule must define at least one day (monday through sunday).",
 		)
-		return
+		return false
 	}
 
 	schedule, err := r.clientFor(plan.CustomerID).PutSchedule(ctx, plan.ID.ValueString(), putReq)
@@ -289,7 +300,7 @@ func (r *ScheduleResource) put(ctx context.Context, plan *ScheduleResourceModel,
 			"Error "+action+" Schedule",
 			"Could not save schedule ID "+plan.ID.ValueString()+": "+err.Error(),
 		)
-		return
+		return true
 	}
 
 	plan.ID = types.StringValue(schedule.ID)
@@ -299,6 +310,8 @@ func (r *ScheduleResource) put(ctx context.Context, plan *ScheduleResourceModel,
 	tflog.Debug(ctx, "Saved schedule", map[string]interface{}{
 		"id": schedule.ID,
 	})
+
+	return true
 }
 
 // resolveCustomerID keeps an explicitly configured customer_id and otherwise
