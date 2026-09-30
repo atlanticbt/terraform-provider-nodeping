@@ -57,11 +57,21 @@ var contentMatchTypes = map[string]bool{
 }
 
 // dnsTypes are check types that support dnstype/dnstoresolve/dnssection/dnsrd.
+// SPEC10DNS is not one: NodePing keeps none of these on it (probed live).
 var dnsTypes = map[string]bool{
-	"DNS":       true,
-	"DOHDOT":    true,
-	"SPEC10DNS": true,
+	"DNS":    true,
+	"DOHDOT": true,
 }
+
+// minIntervalByType holds the smallest interval, in minutes, NodePing keeps for
+// a check type. Below it NodePing stores rewrittenInterval instead, on create
+// and on update (probed live, 2026-09-30).
+var minIntervalByType = map[string]float64{
+	"WHOIS": 240,
+	"RDAP":  60,
+}
+
+const rewrittenInterval = 1440
 
 // warningDaysTypes are check types that support warningdays.
 var warningDaysTypes = map[string]bool{
@@ -435,7 +445,7 @@ resource "nodeping_check" "dns" {
 ` + "```hcl" + `
 resource "nodeping_check" "ssl" {
   type        = "SSL"
-  target      = "example.com"
+  target      = "https://example.com"
   label       = "SSL Certificate"
   enabled     = true
 
@@ -536,12 +546,12 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				},
 			},
 			"sens": schema.Int64Attribute{
-				Description: "Number of rechecks before status change.",
+				Description: "Number of rechecks before status change. 0 changes status on the first failed result.",
 				Optional:    true,
 				Computed:    true,
 				Default:     int64default.StaticInt64(2),
 				Validators: []validator.Int64{
-					int64validator.AtLeast(1),
+					int64validator.AtLeast(0),
 				},
 			},
 			"mute": schema.BoolAttribute{
@@ -645,11 +655,11 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				},
 			},
 			"statuscode": schema.Int64Attribute{
-				Description: "Expected HTTP status code.",
+				Description: "Expected HTTP status code, 100 to 599. 0 is also accepted because NodePing returns it on some existing HTTPADV checks.",
 				Optional:    true,
 				Computed:    true,
 				Validators: []validator.Int64{
-					int64validator.Between(100, 599),
+					int64validator.Any(int64validator.OneOf(0), int64validator.Between(100, 599)),
 				},
 			},
 			// Deliberately not Sensitive, even though it can carry an

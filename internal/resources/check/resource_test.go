@@ -1524,6 +1524,58 @@ func TestModifyPlan_DefaultTags(t *testing.T) {
 	})
 }
 
+// NodePing omits the tags key entirely on checks that never had one, so Read
+// stores tags_all as null. Planning an empty set against that null was an
+// in-place update on every such check, which an import of an existing estate
+// surfaced on 31 of 35 checks.
+func TestModifyPlan_UntaggedCheckPlansNoTagsAllChange(t *testing.T) {
+	ctx := testContext()
+	api := newMockAPI(t)
+
+	planAgainstState := func(t *testing.T, r *CheckResource, config, state CheckResourceModel) types.Set {
+		t.Helper()
+		plan := config
+		plan.TagsAll = types.SetUnknown(types.StringType)
+		resp := &resource.ModifyPlanResponse{Plan: newPlan(t, ctx, plan)}
+		r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+			Config: newConfig(t, ctx, config),
+			Plan:   newPlan(t, ctx, plan),
+			State:  newState(t, ctx, state),
+		}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+		}
+		var out CheckResourceModel
+		resp.Plan.Get(ctx, &out)
+		return out.TagsAll
+	}
+
+	t.Run("should plan null tags_all when state has no tags and none are configured", func(t *testing.T) {
+		config := knownify(baseModel())
+		config.Tags = types.SetNull(types.StringType)
+		state := config
+		state.TagsAll = types.SetNull(types.StringType)
+
+		all := planAgainstState(t, api.resource(), config, state)
+		if !all.IsNull() {
+			t.Errorf("tags_all = %v, want null to match state", all)
+		}
+	})
+
+	t.Run("should plan an empty tags_all when removing tags that state holds", func(t *testing.T) {
+		config := knownify(baseModel())
+		config.Tags = types.SetNull(types.StringType)
+		state := config
+		state.Tags = mustSet(t, ctx, "prod")
+		state.TagsAll = mustSet(t, ctx, "prod")
+
+		all := planAgainstState(t, api.resource(), config, state)
+		if all.IsNull() || all.IsUnknown() || len(tagStrings(t, all)) != 0 {
+			t.Errorf("tags_all = %v, want a known empty set so the removal is sent", all)
+		}
+	})
+}
+
 func TestCreate_SendsMergedTagsSorted(t *testing.T) {
 	ctx := testContext()
 	api := newMockAPI(t)
@@ -1586,11 +1638,18 @@ func TestValidateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("contentstring rejected for the wrong type", func(t *testing.T) {
+	// NodePing keeps a type-specific value when a check changes type and returns
+	// it on read: three live SSL checks carry a contentstring. An error made
+	// those checks impossible to import, so the mismatch is a warning.
+	t.Run("should warn but not fail when contentstring is set on a type that ignores it", func(t *testing.T) {
 		m := configModel()
 		m.ContentString = types.StringValue("x")
-		if !validateConfig(t, m).HasError() {
-			t.Error("expected an error for contentstring on an HTTP check")
+		diags := validateConfig(t, m)
+		if diags.HasError() {
+			t.Errorf("unexpected error: %v", diags)
+		}
+		if diags.WarningsCount() == 0 {
+			t.Error("expected a warning for contentstring on an HTTP check")
 		}
 		m.Type = types.StringValue("HTTPCONTENT")
 		if diags := validateConfig(t, m); diags.HasError() {
@@ -1598,17 +1657,17 @@ func TestValidateConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("dns and warningdays attributes", func(t *testing.T) {
+	t.Run("should warn but not fail for dns and warningdays attributes on an HTTP check", func(t *testing.T) {
 		m := configModel()
 		m.DNSType = types.StringValue("A")
-		if !validateConfig(t, m).HasError() {
-			t.Error("expected an error for dnstype on an HTTP check")
+		if diags := validateConfig(t, m); diags.HasError() || diags.WarningsCount() == 0 {
+			t.Errorf("expected a warning and no error for dnstype on an HTTP check, got %v", diags)
 		}
 
 		m = configModel()
 		m.WarningDays = types.Int64Value(30)
-		if !validateConfig(t, m).HasError() {
-			t.Error("expected an error for warningdays on an HTTP check")
+		if diags := validateConfig(t, m); diags.HasError() || diags.WarningsCount() == 0 {
+			t.Errorf("expected a warning and no error for warningdays on an HTTP check, got %v", diags)
 		}
 		m.Type = types.StringValue("SSL")
 		m.Target = types.StringValue("example.com")
