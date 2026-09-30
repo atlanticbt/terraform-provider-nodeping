@@ -94,7 +94,8 @@ resource "nodeping_contact" "critical_only" {
 - `name` - (Optional) The name of the contact. Used as a display label. NodePing has no way
   to store an empty name, so `name = ""` behaves as if the attribute were omitted and will
   show a permanent diff; leave it out instead.
-- `custrole` - (Optional) The permission role for this contact. Valid values: `edit`, `view`, `notify`. Defaults to `notify`.
+- `custrole` - (Optional) The permission role for this contact. Valid values: `owner`, `edit`, `view`, `notify`. Defaults to `notify`.
+  - `owner` - The account's own login contact. Accepted so owner contacts can be imported.
   - `edit` - Can edit account settings and checks
   - `view` - Can view account settings and checks
   - `notify` - Can only receive notifications
@@ -103,7 +104,9 @@ resource "nodeping_contact" "critical_only" {
 
 The `address` block supports the following arguments:
 
-- `type` - (Required) The type of notification address. Valid values:
+- `type` - (Optional) The type of notification address. Required on every address NodePing
+  has not created yet; the provider refuses a new address without one. Owner and login
+  addresses are stored by NodePing with no type, and are imported with `type` unset. Values:
   - `email` - Email address
   - `sms` - SMS phone number
   - `voice` - Voice call phone number
@@ -145,6 +148,10 @@ The `address` block supports the following arguments:
   is deliberate: a sensitive attribute is written as `null` by `tofu plan -generate-config-out`,
   so an imported webhook contact would plan `(sensitive value) -> null` and the apply would clear
   the real values — silently, because the diff shows `(sensitive value)` on both sides.
+
+  A value NodePing stores as a JSON object (an OpsGenie integration keeps a custom field this
+  way) is read as its JSON text and sent back as a JSON object. Only text that parses as a
+  JSON object or array is sent that way; everything else is sent as a string.
 
   These frequently carry an authentication token. Configuration generated from an account that
   uses webhook auth therefore contains live credentials: scrub the file before committing it, and

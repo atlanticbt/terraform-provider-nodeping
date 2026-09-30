@@ -42,8 +42,8 @@ resource "nodeping_subaccount" "client" {
 }
 ```
 
-`prevent_destroy` also blocks any change that would force replacement, which is exactly
-the protection you want on the create-only attributes described below.
+`prevent_destroy` also blocks any change that would force replacement. The provider itself
+never plans a replacement for the create-only attributes described below.
 
 ## Deletion is asynchronous
 
@@ -60,8 +60,10 @@ disappearance would stall the apply on a queue it cannot influence. Consequences
 
 `contactname` and `email` are accepted only on create. NodePing's update endpoint does not
 take them and no read returns them, so the provider cannot refresh them or change them in
-place. Changing either **forces a new subaccount**, which destroys the existing one and
-everything in it.
+place. Changing either on an existing subaccount is **an error at plan time**: change it in
+the NodePing UI, then update the configuration to match. The provider never replaces a
+subaccount to apply such a change, because replacing one deletes everything in it. Removing
+either from the configuration is allowed and stops tracking it.
 
 `emailme` and `autodiagnotifications` are also never returned by the API. They are written
 on create and update and tracked from configuration; the provider deliberately does not map
@@ -133,13 +135,20 @@ resource "nodeping_contact" "client_ops" {
 ### Required
 
 - `name` (String) The subaccount name. Returned by the API as `customer_name`.
-- `contactname` (String) Name of the subaccount's primary contact. Sent only on create;
-  the API neither returns nor updates it. Changing it forces a new subaccount.
-- `email` (String) Email address of the subaccount's primary contact. Sent only on create;
-  the API neither returns nor updates it. Changing it forces a new subaccount.
 - `timezone` (String) GMT offset expressed as a signed number in a string, for example
-  `"-7"`, `"0"` or `"5.5"`.
-- `location` (String) Default probe region. One of `nam`, `lam`, `eur`, `eao`, `wlw`.
+  `"-7"`, `"0"` or `"5.5"`. NodePing may return it with a decimal, such as `"-5.0"`.
+
+### Required to create
+
+These are Optional in the schema so that an existing subaccount can be imported, because
+NodePing never returns them. Planning a new subaccount without all three is an error.
+
+- `contactname` (String) Name of the subaccount's primary contact. Sent only on create;
+  the API neither returns nor updates it. Changing it once it is set is refused at plan time.
+- `email` (String) Email address of the subaccount's primary contact. Sent only on create;
+  the API neither returns nor updates it. Changing it once it is set is refused at plan time.
+- `location` (String) Default probe region. One of `nam`, `lam`, `eur`, `eao`, `wlw`. On
+  import it is taken from `default_locations` when that holds exactly one region.
 
   NodePing's create documentation lists only `nam`, `eur`, `eao` and `wlw` and omits `lam`.
   Its update documentation and the `runlocations` field on checks both accept `lam`, so the
@@ -148,7 +157,8 @@ resource "nodeping_contact" "client_ops" {
 ### Optional
 
 - `emailme` (String) Whether NodePing emails the parent account about this subaccount.
-  `"yes"` or `"no"`. Defaults to `"no"`. Never returned by the API.
+  `"yes"` or `"no"`. Defaults to `"no"`. NodePing returns it as a boolean, which is read
+  back as `"yes"` or `"no"`.
 - `autodiagnotifications` (String) Whether automatic diagnostics are attached to
   notifications. `"true"` or `"false"`. Defaults to `"false"`. Never returned by the API.
 - `status` (String) `"Active"` or `"Suspend"`. A suspended subaccount stops running its
@@ -186,11 +196,15 @@ call during an incident.
 terraform import nodeping_subaccount.client 201203232048C76FH
 ```
 
-Import cannot recover `contactname`, `email`, `emailme`, `autodiagnotifications` or
-`location` — NodePing never returns them. The provider seeds `emailme` and
-`autodiagnotifications` with their documented defaults and leaves the rest null.
+Import cannot recover `contactname`, `email` or `autodiagnotifications`, because NodePing
+never returns them. `contactname` and `email` stay null, which the schema allows on an
+existing subaccount; `autodiagnotifications` is seeded with its default of `"false"`.
+`emailme` is read from the API, and `location` is taken from `default_locations` when that
+holds a single region.
 
-The create-only attributes use a plan modifier that treats "no prior value" as "no change",
-so the first apply after an import records the configured `contactname` and `email` **without
-recreating the subaccount**. Review the plan before applying it anyway: if it shows a
-replacement, stop, because that means a value genuinely differs from what NodePing holds.
+Deleting a subaccount deletes every check and contact in it, and a deleted subaccount cannot
+be recovered. Give imported subaccounts `lifecycle { prevent_destroy = true }`.
+
+Setting `contactname` or `email` on an imported subaccount, where state holds no value,
+records the configured value with no API call. Once a value is recorded, changing it is an
+error at plan time rather than a replacement.

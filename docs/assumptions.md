@@ -707,3 +707,92 @@ cannot fix this; no ordering derivable from the API response can match an arbitr
 configuration order.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+## A-028 — Every shape found by importing the whole estate is accepted
+
+**Assumption:** the provider accepts each value NodePing returned across all 42 accounts on
+2026-09-30, rather than rejecting data it did not expect.
+
+**Why:** importing the whole estate (543 objects) failed on 114 of them, across eight causes,
+all in the provider:
+
+- `queue` is `false` on every disabled check, not a queue name. The field was never used, so
+  it is no longer decoded. Disabling a check had made it unreadable.
+- A schedule day with no hours has `time1`/`time2` of `false`. `ScheduleTime` reads `false`
+  and `null` as empty.
+- `sens = 0` (one live PUSH check) and `statuscode = 0` (two HTTPADV checks) were refused by
+  validators stricter than NodePing.
+- A type-specific value left on a check after its type changed (`contentstring` on three SSL
+  checks) was an error. It is now a warning. A boolean flag turned on for the wrong type is
+  still an error, since no live check has one.
+- `custrole = "owner"` was refused.
+- Owner and login contact addresses have no `type`, and `GET /contacts/:id` returns a login
+  contact's addresses as an array keyed by nothing. `type` is Optional, read as null when
+  absent, and still required on a new address; the array form is keyed by the address
+  itself, as `GET /contacts` keys it.
+- A webhook query-string value can be a JSON object. `FlexStringMap` keeps it as JSON text
+  and sends text that parses as an object or array back as JSON, so an update does not turn
+  the object into a string. A literal string that happens to be a JSON object would be sent
+  as an object; no live value is like that.
+- `nodeping_subaccount` required `contactname`, `email` and `location`, which NodePing never
+  returns, so no subaccount could be imported. They are Optional, `ModifyPlan` requires them
+  when a subaccount is created, `location` is taken from `default_locations` on import, and
+  `emailme` is read from the API, which returns it as a boolean.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-029 — An untagged check plans null tags_all, not an empty set
+
+**Assumption:** when the configuration and provider defaults give a check no tags and state
+already holds none (null), `tags_all` is planned null.
+
+**Why:** NodePing omits the `tags` key on a check that never had one, which Read stores as
+null, and planning `[]` against that was an in-place update on 31 of 35 checks in the first
+estate import. `[]` is still planned when state holds tags, because that is what tells
+NodePing to clear them.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-030 — Integer zeros are sent to NodePing as strings
+
+**Assumption:** `sens`, `statuscode`, `warningdays`, `volumemin` and `port` are sent as the
+string `"0"` when their value is zero, and as JSON numbers otherwise.
+
+**Why:** NodePing treats a JSON number `0` as empty. Creating a check with `sens: 0` fails with
+"Unable to create check", and `statuscode: 0` or `warningdays: 0` is stored as `""`, so the
+value never settles. The string `"0"` is stored as zero. Found by the 2026-09-30 acceptance
+tests and confirmed with direct API calls against the test subaccount.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-031 — WHOIS and RDAP intervals follow NodePing's minimums
+
+**Assumption:** an unset `interval` plans `1440` for `WHOIS` and `RDAP` checks, and an explicit
+interval below `240` (WHOIS) or `60` (RDAP) is rejected at plan time.
+
+**Why:** NodePing replaces a shorter interval on these types with `1440` on both create and
+update, so the provider's default of `15` drifted on every plan.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-032 — SPEC10DNS is not a DNS type for attribute rules
+
+**Assumption:** `dnstype`, `dnstoresolve`, `dnssection` and `dnsrd` are treated as not
+applicable to `SPEC10DNS` checks.
+
+**Why:** NodePing keeps none of them on a SPEC10DNS check, so a configured value never came
+back and always planned a change.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-033 — contactname and email cannot be changed on an existing subaccount
+
+**Assumption:** changing `contactname` or `email` on a subaccount that already has a value is
+a plan-time error; on an imported subaccount with no value, the configured value is recorded
+without an API call.
+
+**Why:** NodePing neither returns nor updates these fields. The earlier behaviour forced a
+replacement, and replacing a subaccount deletes every check and contact in it, which is never
+an acceptable way to rename a contact. Supersedes the `requiresReplaceIfWasSet` design.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
