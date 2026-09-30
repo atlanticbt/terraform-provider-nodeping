@@ -256,6 +256,128 @@ const maintenanceSchedulesKey = "schedules"
 // only read to recognise the envelope; the ID is already known to the caller.
 const maintenanceCustomerIDKey = "customer_id"
 
+// maintenanceEnvelopeMeta are the status keys NodePing mixes in beside the
+// window documents. Every one is lowercase; generated window IDs are short
+// uppercase alphanumerics (9VKOB, HDDK2, MCARA), so skipping these cannot hide
+// a real window.
+var maintenanceEnvelopeMeta = map[string]struct{}{
+	"ok":                     {},
+	"message":                {},
+	"error":                  {},
+	maintenanceCustomerIDKey: {},
+}
+
+// maintenanceWindowFields are keys that belong to a window document itself.
+// Finding one at the top level means the body is a single bare window rather
+// than an envelope of windows keyed by ID.
+var maintenanceWindowFields = map[string]struct{}{
+	"id": {}, "_id": {}, "customerid": {}, "name": {}, "enabled": {},
+	"cron": {}, "duration": {}, "checklist": {}, "processing": {},
+	"nextrun": {}, "history": {}, "update": {},
+}
+
+// decodeMaintenanceWindows turns any maintenance response body into windows
+// keyed by ID. Recognising the shapes in one place is what stops the list, read
+// and write paths from each inventing their own notion of "this is wrapped":
+//
+//   - the listing envelope — `customer_id` plus the `schedules` and `ad-hoc`
+//     groups, which GET /maintenance returns;
+//   - an ID-keyed envelope — the window under its generated ID beside `ok` and
+//     `message`, which GET /maintenance/:id, POST and PUT all return;
+//   - a bare window document with no wrapper.
+//
+// The envelope key is the authoritative identifier: the windows inside a live
+// listing, create or update response carry no `id` of their own. It is stamped
+// onto any window that arrived without one.
+func decodeMaintenanceWindows(body json.RawMessage) (map[string]Maintenance, error) {
+	if len(body) == 0 {
+		return map[string]Maintenance{}, nil
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+
+	_, hasSchedules := raw[maintenanceSchedulesKey]
+	_, hasAdHoc := raw[AdHocMaintenanceID]
+	if hasSchedules || hasAdHoc {
+		windows := make(map[string]Maintenance, len(raw))
+		for _, key := range []string{maintenanceSchedulesKey, AdHocMaintenanceID} {
+			group, err := decodeMaintenanceGroup(raw[key])
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			for id, window := range group {
+				window.adHoc = key == AdHocMaintenanceID
+				windows[id] = window
+			}
+		}
+		return windows, nil
+	}
+
+	for key := range raw {
+		if _, isField := maintenanceWindowFields[key]; !isField {
+			continue
+		}
+		var window Maintenance
+		if err := json.Unmarshal(body, &window); err != nil {
+			return nil, err
+		}
+		return map[string]Maintenance{window.Identifier(): window}, nil
+	}
+
+	// A response keyed directly by window ID is decoded rather than ignored.
+	// Silently returning an empty result would read as "every window was
+	// deleted", which is the one wrong answer a monitoring provider must not
+	// give.
+	return decodeMaintenanceGroup(body)
+}
+
+// decodeMaintenanceGroup decodes an ID-keyed map of window documents, skipping
+// the status keys that share the level in a write or single-window response.
+func decodeMaintenanceGroup(body json.RawMessage) (map[string]Maintenance, error) {
+	if len(body) == 0 {
+		return map[string]Maintenance{}, nil
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+
+	windows := make(map[string]Maintenance, len(raw))
+	for id, entry := range raw {
+		if _, meta := maintenanceEnvelopeMeta[id]; meta {
+			continue
+		}
+		var window Maintenance
+		if err := json.Unmarshal(entry, &window); err != nil {
+			return nil, fmt.Errorf("window %q: %w", id, err)
+		}
+		if window.Identifier() == "" {
+			window.ID = id
+		}
+		windows[id] = window
+	}
+	return windows, nil
+}
+
+// selectMaintenance picks the single window a read or write response is about.
+// The requested ID wins when it is present; otherwise a lone window is taken,
+// which is how a create — with no ID to ask for yet — finds what it made.
+func selectMaintenance(windows map[string]Maintenance, id string) *Maintenance {
+	if window, ok := windows[id]; ok {
+		return &window
+	}
+	if len(windows) == 1 {
+		for _, window := range windows {
+			return &window
+		}
+	}
+	return nil
+}
+
 // ListMaintenance returns every maintenance window on the account, keyed by ID.
 //
 // GET /maintenance answers with an envelope of `customer_id`, `schedules` and
@@ -263,66 +385,21 @@ const maintenanceCustomerIDKey = "customer_id"
 // result here. Windows from the `ad-hoc` group are marked so IsAdHoc reports
 // them, since an ad-hoc window carries a generated identifier rather than the
 // `ad-hoc` sentinel.
-//
-// The inner window documents are decoded with Maintenance unchanged. No account
-// reachable during this work had a maintenance window, so both groups were only
-// ever observed empty: the envelope is confirmed against the live API, the
-// shape of the windows inside it is not.
 func (c *Client) ListMaintenance(ctx context.Context) (map[string]Maintenance, error) {
-	var raw map[string]json.RawMessage
+	var body json.RawMessage
 	err := c.doRequest(ctx, requestOptions{
 		method: http.MethodGet,
 		path:   "/maintenance",
-	}, &raw)
+	}, &body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list maintenance windows: %w", err)
 	}
 
-	windows := make(map[string]Maintenance, len(raw))
-
-	_, hasSchedules := raw[maintenanceSchedulesKey]
-	_, hasAdHoc := raw[AdHocMaintenanceID]
-	_, hasCustomerID := raw[maintenanceCustomerIDKey]
-	if hasSchedules || hasAdHoc || hasCustomerID {
-		for _, key := range []string{maintenanceSchedulesKey, AdHocMaintenanceID} {
-			if err := collectMaintenanceGroup(raw[key], key, windows); err != nil {
-				return nil, fmt.Errorf("failed to list maintenance windows: %w", err)
-			}
-		}
-		return windows, nil
-	}
-
-	// A response keyed directly by window ID is decoded rather than ignored.
-	// Silently returning an empty result would read as "every window was
-	// deleted", which is the one wrong answer a monitoring provider must not
-	// give.
-	for id, entry := range raw {
-		var window Maintenance
-		if err := json.Unmarshal(entry, &window); err != nil {
-			return nil, fmt.Errorf("failed to list maintenance windows: window %q: %w", id, err)
-		}
-		windows[id] = window
+	windows, err := decodeMaintenanceWindows(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list maintenance windows: %w", err)
 	}
 	return windows, nil
-}
-
-// collectMaintenanceGroup decodes one group of the GET /maintenance envelope
-// into windows. An absent or null group contributes nothing.
-func collectMaintenanceGroup(raw json.RawMessage, key string, windows map[string]Maintenance) error {
-	if len(raw) == 0 {
-		return nil
-	}
-
-	var group map[string]Maintenance
-	if err := json.Unmarshal(raw, &group); err != nil {
-		return fmt.Errorf("%s: %w", key, err)
-	}
-
-	for id, window := range group {
-		window.adHoc = key == AdHocMaintenanceID
-		windows[id] = window
-	}
-	return nil
 }
 
 // GetMaintenance fetches a single maintenance window.
@@ -331,20 +408,26 @@ func (c *Client) GetMaintenance(ctx context.Context, id string) (*Maintenance, e
 		return nil, err
 	}
 
-	var result Maintenance
+	var body json.RawMessage
 	err := c.doRequest(ctx, requestOptions{
 		method: http.MethodGet,
 		path:   "/maintenance/" + url.PathEscape(id),
-	}, &result)
+	}, &body)
 	if err != nil {
 		return nil, notFoundOrWrap(err, "failed to get maintenance window", "maintenance", id)
 	}
+
+	windows, err := decodeMaintenanceWindows(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get maintenance window: %w", err)
+	}
+	result := selectMaintenance(windows, id)
 
 	// An empty body with a 200 is how NodePing reports "no such maintenance"
 	// on some deployments. Treat it as absent rather than returning a hollow
 	// record that would look like drift.
 	if err := absentAsNotFound(
-		result.Identifier() == "" && result.Name == "" && result.Duration == 0,
+		result == nil || (result.Identifier() == "" && result.Name == "" && result.Duration == 0),
 		"maintenance", id,
 	); err != nil {
 		return nil, err
@@ -354,7 +437,7 @@ func (c *Client) GetMaintenance(ctx context.Context, id string) (*Maintenance, e
 		result.ID = id
 	}
 
-	return &result, nil
+	return result, nil
 }
 
 // CreateMaintenance creates a scheduled maintenance window.
@@ -378,23 +461,34 @@ func (c *Client) CreateMaintenance(ctx context.Context, req MaintenanceCreateReq
 	}
 	req.Checklist = normalizeChecklist(req.Checklist)
 
-	var result Maintenance
+	var body json.RawMessage
 	if err := c.doRequest(ctx, requestOptions{
 		method: http.MethodPost,
 		path:   "/maintenance",
 		body:   req,
-	}, &result); err != nil {
+	}, &body); err != nil {
 		return nil, fmt.Errorf("failed to create maintenance window: %w", err)
 	}
 
-	if result.Identifier() == "" {
+	windows, err := decodeMaintenanceWindows(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create maintenance window: %w", err)
+	}
+
+	// The create response names the new window only by the key it is filed
+	// under, so there is nothing else to fall back on. Reporting no id is
+	// misleading when NodePing has in fact created the window, but the
+	// alternative — inventing an identifier — would leave the resource pointing
+	// at nothing.
+	result := selectMaintenance(windows, "")
+	if result == nil || result.Identifier() == "" {
 		return nil, fmt.Errorf("failed to create maintenance window: API returned no id")
 	}
 	if result.IsAdHoc() {
 		return nil, fmt.Errorf("failed to create maintenance window: API returned an ad-hoc record, which cannot be managed as a resource")
 	}
 
-	return &result, nil
+	return result, nil
 }
 
 // UpdateMaintenance modifies an existing maintenance window. `duration` and
@@ -422,21 +516,34 @@ func (c *Client) UpdateMaintenance(ctx context.Context, id string, req Maintenan
 	req.ID = id
 	req.Checklist = normalizeChecklist(req.Checklist)
 
-	var result Maintenance
+	var body json.RawMessage
 	err := c.doRequest(ctx, requestOptions{
 		method: http.MethodPut,
 		path:   "/maintenance/" + url.PathEscape(id),
 		body:   req,
-	}, &result)
+	}, &body)
 	if err != nil {
 		return nil, notFoundOrWrap(err, "failed to update maintenance window", "maintenance", id)
+	}
+
+	windows, err := decodeMaintenanceWindows(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update maintenance window: %w", err)
+	}
+
+	// A response with no window is reported rather than backfilled. Stamping
+	// the ID onto an empty record would write a hollow window to state and plan
+	// the real settings away on the next run.
+	result := selectMaintenance(windows, id)
+	if result == nil {
+		return nil, fmt.Errorf("failed to update maintenance window: API returned no maintenance window")
 	}
 
 	if result.Identifier() == "" {
 		result.ID = id
 	}
 
-	return &result, nil
+	return result, nil
 }
 
 // DeleteMaintenance removes a maintenance window. It reports a *NotFoundError

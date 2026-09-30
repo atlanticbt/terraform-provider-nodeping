@@ -93,6 +93,7 @@ type CheckResourceModel struct {
 	HomeLoc        types.String        `tfsdk:"homeloc"`
 	AutoDiag       types.Bool          `tfsdk:"autodiag"`
 	Tags           types.Set           `tfsdk:"tags"`
+	TagsAll        types.Set           `tfsdk:"tags_all"`
 	Notifications  []NotificationModel `tfsdk:"notifications"`
 	State          types.Int64         `tfsdk:"state"`
 	Created        types.Int64         `tfsdk:"created"`
@@ -471,6 +472,14 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 					"in a subaccount. Changing it forces a new check to be created.",
 				Optional: true,
 				Computed: true,
+				// An empty string is not "no subaccount": the request would go
+				// to the token's own account while state kept "", and the next
+				// refresh would read the real owner back as drift on an
+				// attribute that forces replacement. Omit the attribute
+				// instead. See A-022.
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
@@ -487,6 +496,9 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				Description: "The target URL, hostname, or IP address to check.",
 				Optional:    true,
 				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					TargetNormalizationPlanModifier(),
+				},
 			},
 			"label": schema.StringAttribute{
 				Description: "A label for the check. If not provided, the target will be used.",
@@ -570,14 +582,19 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				Default:     booldefault.StaticBool(false),
 			},
 			"tags": schema.SetAttribute{
-				Description:         "Tags for grouping checks. Provider default_tags are automatically merged with these tags.",
-				MarkdownDescription: "Tags for grouping checks. Provider `default_tags` are automatically merged with these tags.",
+				Description:         "Tags for grouping checks, as written in the configuration. Provider default_tags are not included here; see tags_all for the set actually applied to the check.",
+				MarkdownDescription: "Tags for grouping checks, as written in the configuration. Provider `default_tags` are not included here; see `tags_all` for the set actually applied to the check.",
 				Optional:            true,
-				Computed:            true,
 				ElementType:         types.StringType,
 				Validators: []validator.Set{
 					setvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
 				},
+			},
+			"tags_all": schema.SetAttribute{
+				Description:         "Tags actually applied to the check: the union of tags and the provider default_tags.",
+				MarkdownDescription: "Tags actually applied to the check: the union of `tags` and the provider `default_tags`.",
+				Computed:            true,
+				ElementType:         types.StringType,
 			},
 			"state": schema.Int64Attribute{
 				Description: "Current state of the check (0 = failing, 1 = passing).",

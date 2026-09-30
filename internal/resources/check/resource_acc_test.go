@@ -50,6 +50,12 @@ func testAccSubaccountID(t *testing.T) string {
 // round trip through import compares every attribute the provider writes on
 // apply against the one it derives from a bare API response, which catches
 // normalisation and import bugs across the whole schema at once.
+//
+// The target is written in the form NodePing stores. Import cannot reproduce
+// any other form: state has to match a known configuration value, so an apply
+// records what the practitioner wrote while an import records what the API
+// returned, and the two only coincide when the configuration is already
+// canonical. TestAccCheck_targetNormalization covers the case where it is not.
 func TestAccCheck_importStateVerify(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -59,7 +65,7 @@ func TestAccCheck_importStateVerify(t *testing.T) {
 				Config: `
 resource "nodeping_check" "test" {
   type         = "HTTP"
-  target       = "https://example.com"
+  target       = "https://example.com/"
   label        = "tf-acc-import"
   enabled      = false
   interval     = 15
@@ -80,6 +86,66 @@ resource "nodeping_check" "test" {
 				ResourceName:      "nodeping_check.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// TestAccCheck_targetNormalization is the regression test for the defect the
+// first live acceptance run found. NodePing rewrites "https://example.com" to
+// "https://example.com/", so state can hold either spelling depending on how it
+// got there: an apply records what the practitioner configured, an import
+// records what the API returned. Before the plan modifier existed, the second
+// case planned an update against a check that was already correct, on every run
+// until someone edited the configuration.
+//
+// Step 1 puts the canonical form in state, which is the state an import
+// produces. Step 2 then presents the bare origin as configuration. A PlanOnly
+// step fails on a non-empty plan, so it asserts exactly the thing that was
+// broken: the two spellings settle instead of planning an update.
+func TestAccCheck_targetNormalization(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "nodeping_check" "normalized" {
+  type     = "HTTP"
+  target   = "https://example.com/"
+  label    = "tf-acc-target"
+  enabled  = false
+  interval = 15
+}
+`,
+				Check: resource.TestCheckResourceAttr("nodeping_check.normalized", "target", "https://example.com/"),
+			},
+			{
+				Config: `
+resource "nodeping_check" "normalized" {
+  type     = "HTTP"
+  target   = "https://example.com"
+  label    = "tf-acc-target"
+  enabled  = false
+  interval = 15
+}
+`,
+				PlanOnly: true,
+			},
+			{
+				// A target that differs by more than NodePing's own rewriting
+				// must still plan an update, or the modifier would be hiding
+				// real changes.
+				Config: `
+resource "nodeping_check" "normalized" {
+  type     = "HTTP"
+  target   = "https://example.com/changed"
+  label    = "tf-acc-target"
+  enabled  = false
+  interval = 15
+}
+`,
+				Check: resource.TestCheckResourceAttr("nodeping_check.normalized", "target", "https://example.com/changed"),
 			},
 		},
 	})
@@ -141,7 +207,14 @@ resource "nodeping_check" "pw" {
 				ImportStateVerify: true,
 				// password_wo_version is a client side trigger the API knows
 				// nothing about, so an imported check cannot reproduce it.
-				ImportStateVerifyIgnore: []string{"password_wo_version"},
+				//
+				// modified is NodePing's own timestamp and it keeps moving after
+				// the update response is returned: this step read 1790091927959
+				// on apply and 1790091929202 on the import 1.2s later. Comparing
+				// it makes the step fail whenever that write lands in between.
+				// It is Computed only, so a value that changes under the
+				// provider produces no plan diff.
+				ImportStateVerifyIgnore: []string{"password_wo_version", "modified"},
 			},
 		},
 	})
@@ -187,17 +260,22 @@ provider "nodeping" {
 
 resource "nodeping_check" "tags" {
   type    = "HTTP"
-  target  = "https://example.com"
+  target  = "https://example.com/"
   label   = "tf-acc-tags"
   enabled = false
   tags    = ["team-devops"]
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("nodeping_check.tags", "tags.#", "3"),
-					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags.*", "tf-acc"),
-					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags.*", "managed-by-tofu"),
+					// tags holds only what the configuration wrote. Merging the
+					// defaults into it is what produced "planned value does not
+					// match config value".
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags.#", "1"),
 					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags.*", "team-devops"),
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags_all.#", "3"),
+					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags_all.*", "tf-acc"),
+					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags_all.*", "managed-by-tofu"),
+					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags_all.*", "team-devops"),
 				),
 			},
 			{
@@ -211,15 +289,16 @@ provider "nodeping" {
 
 resource "nodeping_check" "tags" {
   type    = "HTTP"
-  target  = "https://example.com"
+  target  = "https://example.com/"
   label   = "tf-acc-tags"
   enabled = false
   tags    = []
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("nodeping_check.tags", "tags.#", "1"),
-					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags.*", "tf-acc"),
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags.#", "0"),
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags_all.#", "1"),
+					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags_all.*", "tf-acc"),
 				),
 			},
 			{
@@ -230,13 +309,40 @@ provider "nodeping" {}
 
 resource "nodeping_check" "tags" {
   type    = "HTTP"
-  target  = "https://example.com"
+  target  = "https://example.com/"
   label   = "tf-acc-tags"
   enabled = false
   tags    = []
 }
 `,
-				Check: resource.TestCheckResourceAttr("nodeping_check.tags", "tags.#", "0"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags.#", "0"),
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags_all.#", "0"),
+				),
+			},
+			{
+				// A tag the practitioner writes that is also a default must stay
+				// in tags, or the next plan would show it being removed from a
+				// check that is already correct.
+				Config: `
+provider "nodeping" {
+  default_tags = ["tf-acc"]
+}
+
+resource "nodeping_check" "tags" {
+  type    = "HTTP"
+  target  = "https://example.com/"
+  label   = "tf-acc-tags"
+  enabled = false
+  tags    = ["tf-acc", "team-devops"]
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags.#", "2"),
+					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags.*", "tf-acc"),
+					resource.TestCheckTypeSetElemAttr("nodeping_check.tags", "tags.*", "team-devops"),
+					resource.TestCheckResourceAttr("nodeping_check.tags", "tags_all.#", "2"),
+				),
 			},
 		},
 	})
@@ -244,35 +350,44 @@ resource "nodeping_check" "tags" {
 
 // TestAccCheck_subaccount creates a check inside a subaccount and imports it
 // back with the customer_id prefixed import ID.
+//
+// customerID is resolved before the TestCase is built. A Config produced from a
+// variable that PreCheck fills in later is evaluated while the composite
+// literal is still being constructed, which wrote `customer_id = ""` into the
+// configuration and made this test report a provider fault that was not there.
 func TestAccCheck_subaccount(t *testing.T) {
-	var customerID string
+	customerID := testAccSubaccountID(t)
 
-	config := func() string {
-		return fmt.Sprintf(`
+	config := fmt.Sprintf(`
 resource "nodeping_check" "sub" {
   customer_id = %[1]q
   type        = "HTTP"
-  target      = "https://example.com"
+  target      = "https://example.com/"
   label       = "tf-acc-subaccount"
   enabled     = false
 }
 `, customerID)
-	}
 
 	resource.Test(t, resource.TestCase{
-		PreCheck: func() {
-			testAccPreCheck(t)
-			customerID = testAccSubaccountID(t)
-		},
+		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: config(),
+				Config: config,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttrSet("nodeping_check.sub", "id"),
-					resource.TestCheckResourceAttrPtr("nodeping_check.sub", "customer_id", &customerID),
+					resource.TestCheckResourceAttr("nodeping_check.sub", "customer_id", customerID),
 					resource.TestCheckResourceAttr("nodeping_check.sub", "label", "tf-acc-subaccount"),
 				),
+			},
+			{
+				// The attribute check above only sees what apply wrote. A
+				// customer_id that disagrees with the account the API reports
+				// shows up one refresh later, and customer_id forces
+				// replacement, so the drift would be a destroy and recreate on
+				// every plan.
+				Config:   config,
+				PlanOnly: true,
 			},
 			{
 				ResourceName:      "nodeping_check.sub",

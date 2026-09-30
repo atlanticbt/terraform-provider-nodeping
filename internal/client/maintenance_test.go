@@ -308,6 +308,117 @@ func TestListMaintenanceReportsAnUndecodableWindow(t *testing.T) {
 	}
 }
 
+// The live listing carries no `id` inside the window documents — the envelope
+// key is the only identifier — so the key has to be stamped onto the window.
+func TestListMaintenanceStampsIDsFromTheEnvelopeKeys(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"customer_id": "20260922144954LK9ZD3",
+			"schedules": {"MCARA": {"name":"probe","enabled":false,"cron":"0 4 * * 6","duration":90,"checklist":["C1"]}},
+			"ad-hoc": {"MCARB": {"name":"one off","duration":30}}
+		}`))
+	})
+
+	got, err := c.ListMaintenance(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	scheduled := got["MCARA"]
+	if scheduled.Identifier() != "MCARA" {
+		t.Fatalf("scheduled id was not stamped from the key: %q", scheduled.Identifier())
+	}
+	adHoc := got["MCARB"]
+	if adHoc.Identifier() != "MCARB" {
+		t.Fatalf("ad-hoc id was not stamped from the key: %q", adHoc.Identifier())
+	}
+	if !adHoc.IsAdHoc() || scheduled.IsAdHoc() {
+		t.Fatalf("ad-hoc grouping lost: scheduled=%v adhoc=%v", scheduled.IsAdHoc(), adHoc.IsAdHoc())
+	}
+}
+
+// A listing with only one of the two groups present must still decode; the
+// absent group contributes nothing rather than failing the read.
+func TestListMaintenanceAcceptsAnEnvelopeMissingAGroup(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"customer_id":"C1","schedules":{"MCARA":{"name":"probe","duration":90}}}`))
+	})
+
+	got, err := c.ListMaintenance(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got["MCARA"].Name != "probe" {
+		t.Fatalf("unexpected result: %+v", got)
+	}
+}
+
+// Every path shares one decoder, so every path must report a body it cannot
+// read rather than treating it as an empty window.
+func TestMaintenanceReportsAnUndecodableResponseBody(t *testing.T) {
+	cases := map[string]struct {
+		body string
+		call func(*Client) error
+		want string
+	}{
+		"list gets a JSON array": {
+			body: `[1,2,3]`,
+			call: func(c *Client) error { _, err := c.ListMaintenance(context.Background()); return err },
+			want: "failed to list maintenance windows",
+		},
+		"get gets a JSON array": {
+			body: `[1,2,3]`,
+			call: func(c *Client) error { _, err := c.GetMaintenance(context.Background(), "MCARA"); return err },
+			want: "failed to get maintenance window",
+		},
+		"list gets a group that is not an object": {
+			body: `{"customer_id":"C1","schedules":5,"ad-hoc":{}}`,
+			call: func(c *Client) error { _, err := c.ListMaintenance(context.Background()); return err },
+			want: "schedules",
+		},
+		"get gets a window field of the wrong type": {
+			body: `{"name":123}`,
+			call: func(c *Client) error { _, err := c.GetMaintenance(context.Background(), "MCARA"); return err },
+			want: "failed to get maintenance window",
+		},
+		"create gets a JSON array": {
+			body: `[1,2,3]`,
+			call: func(c *Client) error {
+				_, err := c.CreateMaintenance(context.Background(), MaintenanceCreateRequest{
+					Name: "n", Cron: "0 3 * * 0", Duration: 60, Checklist: []string{"C1"},
+				})
+				return err
+			},
+			want: "failed to create maintenance window",
+		},
+		"update gets a JSON array": {
+			body: `[1,2,3]`,
+			call: func(c *Client) error {
+				_, err := c.UpdateMaintenance(context.Background(), "MCARA", MaintenanceUpdateRequest{
+					Name: "n", Duration: 30, Checklist: []string{"C1"},
+				})
+				return err
+			},
+			want: "failed to update maintenance window",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(tc.body))
+			})
+
+			err := tc.call(c)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("expected an error naming %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
 func TestGetMaintenance(t *testing.T) {
 	nextRun := int64(1700000000000)
 	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
@@ -383,6 +494,20 @@ func TestGetMaintenanceEmptyBodyIsTreatedAsNotFound(t *testing.T) {
 	}
 }
 
+// Some deployments answer a missing window with a 200 and no body at all,
+// which must read as absent rather than as a decode failure.
+func TestGetMaintenanceAbsentBodyIsTreatedAsNotFound(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+	})
+
+	_, err := c.GetMaintenance(context.Background(), "GONE")
+	var notFound *NotFoundError
+	if !errors.As(err, &notFound) {
+		t.Fatalf("expected *NotFoundError, got %v", err)
+	}
+}
+
 func TestGetMaintenanceBackfillsIDFromRequest(t *testing.T) {
 	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		_, _ = w.Write([]byte(`{"name":"Weekly","duration":30}`))
@@ -394,6 +519,34 @@ func TestGetMaintenanceBackfillsIDFromRequest(t *testing.T) {
 	}
 	if got.Identifier() != "9VKOB" {
 		t.Fatalf("id was not backfilled: %q", got.Identifier())
+	}
+}
+
+// GET /maintenance/:id answers with the window keyed by its ID, not as a bare
+// document. Decoded as a bare document it reads as empty, and an empty read is
+// reported as not-found — every refresh would have deleted the resource from
+// state.
+func TestGetMaintenanceDecodesTheIDKeyedEnvelope(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MCARA":{"name":"probe-window","enabled":false,"processing":false,
+			"cron":"0 3 * * 6","duration":60,"history":{},"nextrun":1790391600000,
+			"checklist":["20260922144954LK9ZD3-QG41KK88"],
+			"update":{"user":"","timestamp":1790091625424},"id":"MCARA"}}`))
+	})
+
+	got, err := c.GetMaintenance(context.Background(), "MCARA")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Identifier() != "MCARA" || got.Name != "probe-window" || got.Duration != 60 {
+		t.Fatalf("unexpected result: %+v", got)
+	}
+	if got.NextRun == nil || *got.NextRun != 1790391600000 {
+		t.Fatalf("nextrun not decoded: %+v", got.NextRun)
+	}
+	if len(got.Checklist) != 1 || got.Checklist[0] != "20260922144954LK9ZD3-QG41KK88" {
+		t.Fatalf("checklist not decoded: %+v", got.Checklist)
 	}
 }
 
@@ -487,6 +640,38 @@ func TestCreateMaintenanceRejectsMissingAndAdHocIDInResponse(t *testing.T) {
 	if _, err := adHoc.CreateMaintenance(context.Background(), req); err == nil ||
 		!strings.Contains(err.Error(), "ad-hoc") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// POST /maintenance answers with the created window keyed by its generated ID
+// beside `ok` and `message`. There is no top-level `id`, so decoding the body
+// as a bare window found no identifier and failed the create — after NodePing
+// had already created the window, leaking one on every attempt.
+func TestCreateMaintenanceDecodesTheIDKeyedEnvelope(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"HDDK2":{"name":"diag-window","cron":"0 3 * * 6","duration":60,
+			"enabled":false,"processing":false,"history":{},"nextrun":1790391600000,
+			"checklist":["20260922144954LK9ZD3-QG41KK88"],
+			"update":{"user":"","timestamp":1790090708305}},
+			"message":"Maintenance settings were successfully saved.","ok":true}`))
+	})
+
+	got, err := c.CreateMaintenance(context.Background(), MaintenanceCreateRequest{
+		Name: "diag-window", Cron: "0 3 * * 6", Duration: 60,
+		Checklist: []string{"20260922144954LK9ZD3-QG41KK88"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Identifier() != "HDDK2" {
+		t.Fatalf("id was not taken from the envelope key: %q", got.Identifier())
+	}
+	if got.Name != "diag-window" || got.Duration != 60 || got.Cron != "0 3 * * 6" {
+		t.Fatalf("window body was not decoded: %+v", got)
+	}
+	if got.IsAdHoc() {
+		t.Error("a window created with a cron must not be reported as ad-hoc")
 	}
 }
 
@@ -605,6 +790,54 @@ func TestUpdateMaintenanceBackfillsIDInResponse(t *testing.T) {
 	}
 	if got.Identifier() != "9VKOB" {
 		t.Fatalf("id was not backfilled: %q", got.Identifier())
+	}
+}
+
+// PUT /maintenance/:id answers with the same ID-keyed envelope a create does.
+// Decoded as a bare window it yielded a record with nothing but the ID stamped
+// back on, so an update wrote an empty name, a zero duration and no checklist
+// into state without reporting an error.
+func TestUpdateMaintenanceDecodesTheIDKeyedEnvelope(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"MCARA":{"name":"probe-window-updated","enabled":false,
+			"processing":false,"cron":"0 4 * * 6","duration":90,"history":{},
+			"nextrun":1790395200000,"checklist":["20260922144954LK9ZD3-QG41KK88"],
+			"update":{"user":"","timestamp":1790091625700}},
+			"message":"Maintenance settings were successfully saved.","ok":true}`))
+	})
+
+	got, err := c.UpdateMaintenance(context.Background(), "MCARA", MaintenanceUpdateRequest{
+		Name: "probe-window-updated", Cron: "0 4 * * 6", Duration: 90,
+		Checklist: []string{"20260922144954LK9ZD3-QG41KK88"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Identifier() != "MCARA" {
+		t.Fatalf("unexpected id %q", got.Identifier())
+	}
+	if got.Name != "probe-window-updated" || got.Duration != 90 || got.Cron != "0 4 * * 6" {
+		t.Fatalf("window body was not decoded: %+v", got)
+	}
+	if len(got.Checklist) != 1 {
+		t.Fatalf("checklist was not decoded: %+v", got.Checklist)
+	}
+}
+
+// An update that returns no window at all must be reported. Stamping the ID
+// onto an empty record would persist a hollow window to state and plan the
+// real settings away on the next run.
+func TestUpdateMaintenanceReportsAResponseWithNoWindow(t *testing.T) {
+	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"message":"Maintenance settings were successfully saved."}`))
+	})
+
+	_, err := c.UpdateMaintenance(context.Background(), "MCARA", MaintenanceUpdateRequest{
+		Name: "New", Duration: 30, Checklist: []string{"C1"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "failed to update maintenance window") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

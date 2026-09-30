@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
@@ -110,6 +111,10 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 		return
 	}
 
+	// NodePing owns a check from here on. Every step below can still fail and
+	// return, so the identifier reaches state before any of them do.
+	defer recordCreatedID(ctx, resp, check.ID, plan.CustomerID)
+
 	result := mapForApply(ctx, check, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
@@ -135,7 +140,9 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		"id": state.ID.ValueString(),
 	})
 
-	check, err := r.clientFor(state.CustomerID).GetCheck(ctx, state.ID.ValueString())
+	c := r.clientFor(state.CustomerID)
+
+	check, err := c.GetCheck(ctx, state.ID.ValueString())
 	if err != nil {
 		var nfErr *client.NotFoundError
 		if errors.As(err, &nfErr) {
@@ -152,7 +159,7 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	newState := mapForRead(ctx, check, &state, &resp.Diagnostics)
+	newState := mapForRead(ctx, check, &state, c.GetDefaultTags(), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -313,7 +320,7 @@ func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStat
 		return
 	}
 
-	state := mapForRead(ctx, check, nil, &resp.Diagnostics)
+	state := mapForRead(ctx, check, nil, c.GetDefaultTags(), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -329,12 +336,23 @@ func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStat
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
 
-// ModifyPlan merges the provider level default_tags into the planned tags.
+// ModifyPlan computes tags_all, the union of the configured tags and the
+// provider level default_tags, and it is tags_all that is sent to NodePing.
 //
-// The explicit tags are read from the *config* rather than the plan: because
-// "tags" is Optional+Computed, the framework copies prior state into the plan
-// when the attribute is absent from config, which would otherwise make tag
-// removals invisible.
+// The merge cannot be written into "tags" itself. Terraform requires the
+// planned value of an Optional attribute to equal a known configuration value,
+// so planning [team-devops, tf-acc] against a configured [team-devops] is
+// rejected as an invalid plan; doing the same merge in Read instead only moves
+// the same rule one step later, to the consistency check after apply. Splitting
+// the attribute in two is what the AWS provider does for the same reason:
+// "tags" holds what the practitioner wrote and always matches the
+// configuration, and the computed "tags_all" holds what is actually applied.
+//
+// The configured tags are read from the config rather than the plan so that a
+// removal is visible. That mattered more when "tags" was Optional+Computed and
+// the framework copied prior state into the plan for an absent attribute; with
+// "tags" now Optional only the plan already tracks config, and reading the
+// config keeps the merge correct either way.
 func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	// Skip if destroying or client not configured.
 	if req.Plan.Raw.IsNull() || r.client == nil {
@@ -347,13 +365,12 @@ func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 		return
 	}
 
-	// An unknown config value cannot be merged at plan time; the apply path will
-	// fill it in from the API response.
+	// An unknown config value cannot be merged at plan time. Leaving tags_all
+	// unknown lets the apply path fill it in from the API response.
 	if configTags.IsUnknown() {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("tags_all"), types.SetUnknown(types.StringType))...)
 		return
 	}
-
-	defaultTags := r.client.GetDefaultTags()
 
 	var explicitTags []string
 	if !configTags.IsNull() {
@@ -361,21 +378,78 @@ func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 		if resp.Diagnostics.HasError() {
 			return
 		}
-	} else if len(defaultTags) == 0 {
-		// Nothing configured and no defaults: leave whatever the framework
-		// planned (prior state on update, unknown on create) alone.
-		return
 	}
 
-	merged := mergeTags(defaultTags, explicitTags)
+	merged := mergeTags(r.client.GetDefaultTags(), explicitTags)
 
-	tagsSet, diags := types.SetValueFrom(ctx, types.StringType, merged)
+	tagsAll, diags := types.SetValueFrom(ctx, types.StringType, merged)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("tags"), tagsSet)...)
+	resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("tags_all"), tagsAll)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	collapseNoOpPlan(ctx, req, resp)
+}
+
+// collapseNoOpPlan replaces the plan with prior state when nothing the provider
+// can see has actually changed.
+//
+// TargetNormalizationPlanModifier keeps "target" itself out of the diff when
+// the configuration spells it differently from the form NodePing stores, but by
+// the time any plan modifier runs the damage is done: the framework has already
+// compared the proposed plan with prior state and, finding them different,
+// marked every null computed attribute unknown so the provider can fill it in.
+// A plan carrying unknowns is not an empty plan. After an import, where state
+// holds NodePing's canonical target and the configuration holds the
+// practitioner's, that left an in-place update planned against a check with
+// nothing wrong with it.
+//
+// Resource level ModifyPlan is the last hook in the sequence and the only one
+// that can undo it. Filling the unknowns back from prior state is what decides
+// the question: if every value the plan actually knows already matches state
+// then the blanked attributes are the whole of the difference, and planning
+// prior state verbatim is what Terraform asks a provider to do when it
+// considers the configured and prior values equivalent. Any real change leaves
+// a known value differing, and the plan is left alone.
+func collapseNoOpPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || resp.Plan.Raw.IsNull() || resp.Plan.Raw.Equal(req.State.Raw) {
+		return
+	}
+
+	filled, err := fillUnknownsFromState(resp.Plan.Raw, req.State.Raw)
+	if err != nil || !filled.Equal(req.State.Raw) {
+		return
+	}
+
+	tflog.Debug(ctx, "Plan differs from state only in values the framework blanked; keeping prior state")
+
+	resp.Plan.Raw = req.State.Raw
+}
+
+// fillUnknownsFromState returns plan with every unknown value replaced by the
+// value at the same path in state. A path that state does not have is left
+// unknown, which keeps the caller's comparison unequal rather than silently
+// treating a missing value as a match.
+func fillUnknownsFromState(plan, state tftypes.Value) (tftypes.Value, error) {
+	return tftypes.Transform(plan, func(p *tftypes.AttributePath, v tftypes.Value) (tftypes.Value, error) {
+		if v.IsKnown() {
+			return v, nil
+		}
+		found, remaining, err := tftypes.WalkAttributePath(state, p)
+		if err != nil || len(remaining.Steps()) > 0 {
+			return v, nil
+		}
+		stateValue, ok := found.(tftypes.Value)
+		if !ok {
+			return v, nil
+		}
+		return stateValue, nil
+	})
 }
 
 // writeOnlyPassword reads password_wo out of the configuration. Write-only
@@ -618,12 +692,13 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.HomeLoc = plan.HomeLoc.ValueString()
 	}
 
-	// Tags are already merged with default_tags in ModifyPlan.
+	// tags_all is the merged set ModifyPlan computed; "tags" holds only what the
+	// practitioner wrote and is never sent.
 	// An empty (but non-null) set means "remove every tag", which must be sent
 	// as [] rather than omitted — hence the pointer.
-	if isSet(plan.Tags) {
+	if isSet(plan.TagsAll) {
 		tags := []string{}
-		diags.Append(plan.Tags.ElementsAs(ctx, &tags, false)...)
+		diags.Append(plan.TagsAll.ElementsAs(ctx, &tags, false)...)
 		sort.Strings(tags)
 		req.Tags = &tags
 	}
@@ -883,14 +958,77 @@ func mergeTags(defaults, explicit []string) []string {
 	return merged
 }
 
+// deriveConfiguredTags splits the practitioner's own tags back out of the
+// merged set the API returned, by removing the provider default_tags.
+//
+// A default the practitioner also listed explicitly must survive, or the next
+// plan would show it being removed from "tags" on a check that is correct. The
+// prior state is the only record of which tags were written by hand, so a tag
+// that is both a default and present in prior "tags" is kept.
+//
+// Import has no prior state and therefore no way to tell the two apart; there
+// the defaults are removed unconditionally, which is the reading that produces
+// a configuration the practitioner would have written.
+func deriveConfiguredTags(ctx context.Context, all types.Set, defaultTags []string, prior *CheckResourceModel, diags *diag.Diagnostics) types.Set {
+	if all.IsNull() || all.IsUnknown() {
+		return all
+	}
+
+	var merged []string
+	diags.Append(all.ElementsAs(ctx, &merged, false)...)
+	if diags.HasError() {
+		return all
+	}
+
+	priorTags := make(map[string]bool)
+	havePrior := prior != nil && isSet(prior.Tags)
+	if havePrior {
+		var written []string
+		diags.Append(prior.Tags.ElementsAs(ctx, &written, false)...)
+		if diags.HasError() {
+			return all
+		}
+		for _, tag := range written {
+			priorTags[tag] = true
+		}
+	}
+
+	isDefault := make(map[string]bool, len(defaultTags))
+	for _, tag := range defaultTags {
+		isDefault[tag] = true
+	}
+
+	configured := make([]string, 0, len(merged))
+	for _, tag := range merged {
+		if isDefault[tag] && !priorTags[tag] {
+			continue
+		}
+		configured = append(configured, tag)
+	}
+
+	// An absent "tags" argument and an empty one are different configurations,
+	// and state has to match whichever the practitioner wrote. With nothing left
+	// after the defaults are removed, prior state is what distinguishes them.
+	if len(configured) == 0 && !havePrior {
+		return types.SetNull(types.StringType)
+	}
+
+	result, d := types.SetValueFrom(ctx, types.StringType, configured)
+	diags.Append(d...)
+	return result
+}
+
 // mapForRead builds a model that reflects the API response for every attribute.
 // It is used by Read and ImportState. prior may be nil (import); when it is not
 // nil it is used only for values that the API cannot round-trip (password) or
-// normalises in a semantically irrelevant way (trailing slash on target) and to
-// keep the notification ordering stable.
-func mapForRead(ctx context.Context, check *client.Check, prior *CheckResourceModel, diags *diag.Diagnostics) *CheckResourceModel {
+// normalises in a way the practitioner did not ask for (the canonical form of
+// the target, and the default_tags folded into the check's tag set) and to keep
+// the notification ordering stable.
+func mapForRead(ctx context.Context, check *client.Check, prior *CheckResourceModel, defaultTags []string, diags *diag.Diagnostics) *CheckResourceModel {
 	model := &CheckResourceModel{}
 	mapCheckToModel(ctx, check, model, diags)
+
+	model.Tags = deriveConfiguredTags(ctx, model.TagsAll, defaultTags, prior, diags)
 
 	if prior == nil {
 		return model
@@ -908,8 +1046,11 @@ func mapForRead(ctx context.Context, check *client.Check, prior *CheckResourceMo
 
 	model.Hosts = restoreHostPasswords(ctx, prior.Hosts, model.Hosts, diags)
 
-	// Ignore purely cosmetic normalisation of the target.
-	if isSet(prior.Target) && normalizeURL(prior.Target.ValueString()) == normalizeURL(model.Target.ValueString()) {
+	// Keep the practitioner's spelling when the API only rewrote the target
+	// into its canonical form. normalizeTarget is scoped to the check types the
+	// API was observed to rewrite, so a difference in case or a trailing slash
+	// on a type it leaves alone is still reported as drift.
+	if isSet(prior.Target) && normalizeTarget(check.Type, prior.Target.ValueString()) == normalizeTarget(check.Type, model.Target.ValueString()) {
 		model.Target = prior.Target
 	}
 
@@ -1111,13 +1252,17 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 	model.Dep = interfaceStringOrNull(check.Dep)
 	model.HomeLoc = interfaceStringOrNull(check.HomeLoc)
 
+	// The API only knows the merged set, so it lands in tags_all. Splitting the
+	// practitioner's own tags back out needs the provider defaults and the
+	// prior state, which mapForRead has and this function does not.
 	if check.Tags != nil {
 		tags, d := types.SetValueFrom(ctx, types.StringType, check.Tags)
 		diags.Append(d...)
-		model.Tags = tags
+		model.TagsAll = tags
 	} else {
-		model.Tags = types.SetNull(types.StringType)
+		model.TagsAll = types.SetNull(types.StringType)
 	}
+	model.Tags = model.TagsAll
 
 	model.RunLocations = runLocationsToList(ctx, check.RunLocations, diags)
 
@@ -1550,10 +1695,6 @@ func toInt64(v interface{}) (int64, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func normalizeURL(u string) string {
-	return strings.TrimSuffix(u, "/")
 }
 
 // parseBoolInterface converts various interface{} types to bool.

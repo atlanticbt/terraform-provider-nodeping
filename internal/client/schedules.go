@@ -104,8 +104,15 @@ type ScheduleDay struct {
 
 // Schedule is a named notification schedule. The ID is chosen by the caller,
 // not by NodePing.
+//
+// ID is excluded from JSON on purpose. No schedules response carries a usable
+// schedule identifier: GET /schedules/:id returns only the day map, and
+// PUT /schedules/:id answers `{"ok":true,"id":"<account id>"}` — an `id` that
+// names the account, not the schedule. Decoding it produced a schedule whose ID
+// was the account ID. The request path and the list map key are the only
+// authorities, and scheduleWithID is the one place either is applied.
 type Schedule struct {
-	ID         string                 `json:"id,omitempty"`
+	ID         string                 `json:"-"`
 	CustomerID string                 `json:"customer_id,omitempty"`
 	Data       map[string]ScheduleDay `json:"data,omitempty"`
 }
@@ -119,14 +126,14 @@ type SchedulePutRequest struct {
 
 // UnmarshalJSON tolerates the shapes NodePing has been observed returning for a
 // schedule: the documented `{"id":..., "data":{...}}`, the Mongo-style `_id`,
-// and a bare day map with no `data` wrapper.
+// and a bare day map with no `data` wrapper. The `id`/`_id` field is read by
+// nobody — see the note on Schedule.ID.
 func (s *Schedule) UnmarshalJSON(data []byte) error {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("failed to decode schedule: %w", err)
 	}
 
-	s.ID = firstString(raw, "id", "_id")
 	s.CustomerID = firstString(raw, "customer_id", "customerid")
 
 	if wrapped, ok := raw["data"]; ok {
@@ -191,6 +198,20 @@ func decodeScheduleDays(raw json.RawMessage) (map[string]ScheduleDay, error) {
 		days[name] = day
 	}
 	return days, nil
+}
+
+// scheduleWithID decodes a schedules response body and stamps on the
+// identifier the caller already knows. Routing every response through here is
+// what keeps a stray `id` in the body from retargeting the resource.
+func scheduleWithID(raw json.RawMessage, id string) (*Schedule, error) {
+	var schedule Schedule
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &schedule); err != nil {
+			return nil, err
+		}
+	}
+	schedule.ID = id
+	return &schedule, nil
 }
 
 func validateScheduleID(id string) error {
@@ -282,13 +303,11 @@ func (c *Client) ListSchedules(ctx context.Context) (map[string]Schedule, error)
 		return map[string]Schedule{}, nil
 	}
 
-	// The per-schedule payload frequently omits the ID because it is already
-	// the map key.
+	// The map key is the schedule name, and it is the only identifier the list
+	// response carries that means anything.
 	for key, schedule := range result {
-		if schedule.ID == "" {
-			schedule.ID = key
-			result[key] = schedule
-		}
+		schedule.ID = key
+		result[key] = schedule
 	}
 
 	return result, nil
@@ -311,11 +330,9 @@ func (c *Client) GetSchedule(ctx context.Context, id string) (*Schedule, error) 
 		return nil, notFoundOrWrap(err, "failed to get schedule", "schedule", id)
 	}
 
-	var schedule Schedule
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &schedule); err != nil {
-			return nil, fmt.Errorf("failed to get schedule: %w", err)
-		}
+	schedule, err := scheduleWithID(raw, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get schedule: %w", err)
 	}
 
 	// A schedule with no days is how the API reports "no such schedule" on some
@@ -325,11 +342,7 @@ func (c *Client) GetSchedule(ctx context.Context, id string) (*Schedule, error) 
 		return nil, err
 	}
 
-	if schedule.ID == "" {
-		schedule.ID = id
-	}
-
-	return &schedule, nil
+	return schedule, nil
 }
 
 // PutSchedule creates or replaces a schedule. The schedules endpoint exposes no
@@ -357,18 +370,12 @@ func (c *Client) PutSchedule(ctx context.Context, id string, req SchedulePutRequ
 		return nil, fmt.Errorf("failed to save schedule: %w", err)
 	}
 
-	schedule := Schedule{ID: id}
-
-	if len(raw) > 0 {
-		if err := json.Unmarshal(raw, &schedule); err != nil {
-			return nil, fmt.Errorf("failed to save schedule: %w", err)
-		}
-		if schedule.ID == "" {
-			schedule.ID = id
-		}
+	schedule, err := scheduleWithID(raw, id)
+	if err != nil {
+		return nil, fmt.Errorf("failed to save schedule: %w", err)
 	}
 
-	return &schedule, nil
+	return schedule, nil
 }
 
 // DeleteSchedule removes a schedule. Deleting a schedule that is already gone

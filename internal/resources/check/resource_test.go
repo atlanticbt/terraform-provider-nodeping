@@ -34,6 +34,9 @@ func withTypedNulls(m CheckResourceModel) CheckResourceModel {
 	if m.Tags.IsNull() && m.Tags.ElementType(context.Background()) == nil {
 		m.Tags = types.SetNull(types.StringType)
 	}
+	if m.TagsAll.IsNull() && m.TagsAll.ElementType(context.Background()) == nil {
+		m.TagsAll = types.SetNull(types.StringType)
+	}
 	for _, f := range []*types.List{&m.RunLocations} {
 		if f.IsNull() && f.ElementType(context.Background()) == nil {
 			*f = types.ListNull(types.StringType)
@@ -908,6 +911,84 @@ func TestCreate_PreservesPasswordAndNormalisedValues(t *testing.T) {
 	}
 }
 
+func TestCreate_RecordsTheCheckIDWhenTheResponseCannotBeMapped(t *testing.T) {
+	ctx := testContext()
+	api := newMockAPI(t)
+	// The POST succeeded, so the check exists. Only the mapping of the response
+	// into state fails, on a threshold NodePing reported as a non-numeric
+	// string. Returning that error without writing state would leave the check
+	// running in NodePing with nothing in the state file pointing at it.
+	api.transform = func(body map[string]interface{}, stored map[string]interface{}) {
+		stored["parameters"].(map[string]interface{})["threshold"] = "not-a-number"
+	}
+	r := api.resource()
+
+	resp := &resource.CreateResponse{State: emptyState(ctx), Identity: newIdentity(t, ctx, nil)}
+	r.Create(ctx, newCreateRequest(t, ctx, baseModel()), resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the unmappable response to be reported")
+	}
+
+	got := stateModel(t, ctx, resp.State)
+	if got.ID.ValueString() != "MOCK-CHECK-1" {
+		t.Fatalf("state must carry the check ID so the next plan can reconcile it, got %q", got.ID.ValueString())
+	}
+	// customer_id was never configured, so it stays null and Read falls back to
+	// the provider-level client -- the same scope the create used.
+	if !got.CustomerID.IsNull() {
+		t.Errorf("customer_id must stay null when it was not configured, got %v", got.CustomerID)
+	}
+	if !resp.Identity.Raw.IsFullyNull() {
+		t.Errorf("identity must stay null on a failed create, got %v", resp.Identity.Raw)
+	}
+}
+
+func TestCreate_RecordsTheConfiguredCustomerIDAlongsideTheCheckID(t *testing.T) {
+	ctx := testContext()
+	api := newMockAPI(t)
+	api.transform = func(body map[string]interface{}, stored map[string]interface{}) {
+		stored["parameters"].(map[string]interface{})["threshold"] = "not-a-number"
+	}
+	r := api.resource()
+
+	plan := baseModel()
+	plan.CustomerID = types.StringValue("SUBACC1")
+
+	resp := &resource.CreateResponse{State: emptyState(ctx)}
+	r.Create(ctx, newCreateRequest(t, ctx, plan), resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the unmappable response to be reported")
+	}
+
+	// Read scopes its lookup with customer_id, so the partial state has to
+	// carry the subaccount the check was created in.
+	got := stateModel(t, ctx, resp.State)
+	if got.CustomerID.ValueString() != "SUBACC1" {
+		t.Fatalf("state must carry the configured customer_id, got %q", got.CustomerID.ValueString())
+	}
+}
+
+func TestCreate_WritesNoStateWhenTheAPICallFails(t *testing.T) {
+	ctx := testContext()
+	api := newMockAPI(t)
+	api.notFound = true
+	r := api.resource()
+
+	resp := &resource.CreateResponse{State: emptyState(ctx)}
+	r.Create(ctx, newCreateRequest(t, ctx, baseModel()), resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the failed create to be reported")
+	}
+	// No ID came back, so there is nothing to record. State must stay empty
+	// rather than gain an object OpenTofu would then try to manage.
+	if !resp.State.Raw.IsNull() {
+		t.Fatalf("state must stay empty when the create itself failed, got %v", resp.State.Raw)
+	}
+}
+
 func TestCreate_ContentStringPreservedSymmetrically(t *testing.T) {
 	ctx := testContext()
 	api := newMockAPI(t)
@@ -1311,23 +1392,6 @@ func TestMetadataAndSchema(t *testing.T) {
 // default_tags
 // ---------------------------------------------------------------------------
 
-func modifyPlanTags(t *testing.T, r *CheckResource, config, plan CheckResourceModel) (types.Set, diag.Diagnostics) {
-	t.Helper()
-	ctx := testContext()
-	resp := &resource.ModifyPlanResponse{Plan: newPlan(t, ctx, plan)}
-	r.ModifyPlan(ctx, resource.ModifyPlanRequest{
-		Config: newConfig(t, ctx, config),
-		Plan:   newPlan(t, ctx, plan),
-		State:  emptyState(ctx),
-	}, resp)
-	if resp.Diagnostics.HasError() {
-		return types.SetNull(types.StringType), resp.Diagnostics
-	}
-	var out CheckResourceModel
-	resp.Plan.Get(ctx, &out)
-	return out.Tags, resp.Diagnostics
-}
-
 func tagStrings(t *testing.T, s types.Set) []string {
 	t.Helper()
 	if s.IsNull() || s.IsUnknown() {
@@ -1340,88 +1404,113 @@ func tagStrings(t *testing.T, s types.Set) []string {
 	return out
 }
 
+// The merge must land in tags_all and never in tags. Writing it into tags was
+// rejected by Terraform as an invalid plan ("planned value [...] does not match
+// config value [...]") the moment a resource declared any tags of its own,
+// because the planned value of an Optional attribute has to equal a known
+// configuration value.
 func TestModifyPlan_DefaultTags(t *testing.T) {
 	ctx := testContext()
 	api := newMockAPI(t)
 
-	t.Run("merges defaults with configured tags", func(t *testing.T) {
+	// planTags returns the planned tags and tags_all together, because the
+	// relationship between them is the thing under test.
+	planTags := func(t *testing.T, r *CheckResource, config CheckResourceModel) (tags, all types.Set) {
+		t.Helper()
+		plan := config
+		plan.TagsAll = types.SetUnknown(types.StringType)
+		resp := &resource.ModifyPlanResponse{Plan: newPlan(t, ctx, plan)}
+		r.ModifyPlan(ctx, resource.ModifyPlanRequest{
+			Config: newConfig(t, ctx, config),
+			Plan:   newPlan(t, ctx, plan),
+			State:  emptyState(ctx),
+		}, resp)
+		if resp.Diagnostics.HasError() {
+			t.Fatalf("unexpected diagnostics: %v", resp.Diagnostics)
+		}
+		var out CheckResourceModel
+		resp.Plan.Get(ctx, &out)
+		return out.Tags, out.TagsAll
+	}
+
+	t.Run("configured tags are never rewritten", func(t *testing.T) {
 		r := api.resource("managed")
 		config := knownify(baseModel())
 		config.Tags = mustSet(t, ctx, "prod")
-		plan := config
-		got, _ := modifyPlanTags(t, r, config, plan)
-		if len(tagStrings(t, got)) != 2 {
-			t.Errorf("tags = %v, want managed+prod", tagStrings(t, got))
+
+		tags, all := planTags(t, r, config)
+		if got := tagStrings(t, tags); len(got) != 1 || got[0] != "prod" {
+			t.Errorf("tags = %v, want exactly the configured [prod]", got)
+		}
+		if got := tagStrings(t, all); len(got) != 2 {
+			t.Errorf("tags_all = %v, want managed+prod", got)
 		}
 	})
 
-	t.Run("tag removal is visible even though the plan holds prior state", func(t *testing.T) {
+	t.Run("defaults alone fill tags_all when no tags are configured", func(t *testing.T) {
 		r := api.resource("managed")
 		config := knownify(baseModel())
-		config.Tags = mustSet(t, ctx, "prod")
-		// The framework copied the *old* state (which still has "legacy") into
-		// the plan because tags is Optional+Computed.
-		plan := config
-		plan.Tags = mustSet(t, ctx, "managed", "prod", "legacy")
+		config.Tags = types.SetNull(types.StringType)
 
-		got, _ := modifyPlanTags(t, r, config, plan)
-		for _, tag := range tagStrings(t, got) {
-			if tag == "legacy" {
-				t.Fatalf("removed tag survived the plan: %v", tagStrings(t, got))
-			}
+		tags, all := planTags(t, r, config)
+		if !tags.IsNull() {
+			t.Errorf("tags = %v, want null so it still matches the configuration", tags)
 		}
-		if len(tagStrings(t, got)) != 2 {
-			t.Errorf("tags = %v, want managed+prod", tagStrings(t, got))
+		if got := tagStrings(t, all); len(got) != 1 || got[0] != "managed" {
+			t.Errorf("tags_all = %v, want managed", got)
 		}
 	})
 
-	t.Run("default_tags removal converges", func(t *testing.T) {
+	t.Run("a configured tag that is also a default appears once", func(t *testing.T) {
+		r := api.resource("managed")
+		config := knownify(baseModel())
+		config.Tags = mustSet(t, ctx, "managed", "prod")
+
+		tags, all := planTags(t, r, config)
+		if got := tagStrings(t, tags); len(got) != 2 {
+			t.Errorf("tags = %v, want both configured tags", got)
+		}
+		if got := tagStrings(t, all); len(got) != 2 {
+			t.Errorf("tags_all = %v, want the duplicate collapsed", got)
+		}
+	})
+
+	t.Run("removing every tag plans an empty tags_all", func(t *testing.T) {
+		r := api.resource()
+		config := knownify(baseModel())
+		config.Tags = emptyTagSet()
+
+		tags, all := planTags(t, r, config)
+		if got := tagStrings(t, tags); len(got) != 0 {
+			t.Errorf("tags = %v, want empty", got)
+		}
+		if all.IsNull() || all.IsUnknown() {
+			t.Fatalf("tags_all = %v, want a known empty set so the removal is sent", all)
+		}
+		if got := tagStrings(t, all); len(got) != 0 {
+			t.Errorf("tags_all = %v, want empty", got)
+		}
+	})
+
+	t.Run("dropping default_tags converges without resurrecting them", func(t *testing.T) {
 		r := api.resource() // default_tags removed from the provider
 		config := knownify(baseModel())
 		config.Tags = mustSet(t, ctx, "prod")
-		plan := config
-		plan.Tags = mustSet(t, ctx, "managed", "prod")
 
-		got, _ := modifyPlanTags(t, r, config, plan)
-		if len(tagStrings(t, got)) != 1 || tagStrings(t, got)[0] != "prod" {
-			t.Errorf("tags = %v, want only prod", tagStrings(t, got))
+		_, all := planTags(t, r, config)
+		if got := tagStrings(t, all); len(got) != 1 || got[0] != "prod" {
+			t.Errorf("tags_all = %v, want only prod", got)
 		}
 	})
 
-	t.Run("defaults applied when no tags are configured", func(t *testing.T) {
-		r := api.resource("managed")
-		config := knownify(baseModel())
-		config.Tags = types.SetNull(types.StringType)
-		plan := config
-		plan.Tags = types.SetUnknown(types.StringType)
-
-		got, _ := modifyPlanTags(t, r, config, plan)
-		if len(tagStrings(t, got)) != 1 || tagStrings(t, got)[0] != "managed" {
-			t.Errorf("tags = %v, want managed", tagStrings(t, got))
-		}
-	})
-
-	t.Run("no defaults and no config leaves the plan alone", func(t *testing.T) {
-		r := api.resource()
-		config := knownify(baseModel())
-		config.Tags = types.SetNull(types.StringType)
-		plan := config
-		plan.Tags = mustSet(t, ctx, "kept-by-framework")
-
-		got, _ := modifyPlanTags(t, r, config, plan)
-		if len(tagStrings(t, got)) != 1 || tagStrings(t, got)[0] != "kept-by-framework" {
-			t.Errorf("tags = %v, want the untouched plan value", tagStrings(t, got))
-		}
-	})
-
-	t.Run("unknown config tags are left to the apply path", func(t *testing.T) {
+	t.Run("unknown config tags leave tags_all unknown for the apply path", func(t *testing.T) {
 		r := api.resource("managed")
 		config := knownify(baseModel())
 		config.Tags = types.SetUnknown(types.StringType)
-		plan := config
-		got, _ := modifyPlanTags(t, r, config, plan)
-		if !got.IsUnknown() {
-			t.Errorf("tags = %v, want unknown", got)
+
+		_, all := planTags(t, r, config)
+		if !all.IsUnknown() {
+			t.Errorf("tags_all = %v, want unknown", all)
 		}
 	})
 
@@ -1442,6 +1531,7 @@ func TestCreate_SendsMergedTagsSorted(t *testing.T) {
 
 	plan := baseModel()
 	plan.Tags = mustSet(t, ctx, "b", "a")
+	plan.TagsAll = mustSet(t, ctx, "b", "a")
 
 	resp := &resource.CreateResponse{State: emptyState(ctx)}
 	r.Create(ctx, newCreateRequest(t, ctx, plan), resp)
@@ -1452,8 +1542,8 @@ func TestCreate_SendsMergedTagsSorted(t *testing.T) {
 	if len(sent) != 2 || sent[0] != "a" {
 		t.Errorf("tags sent = %#v, want a sorted [a b]", sent)
 	}
-	if len(tagStrings(t, stateModel(t, ctx, resp.State).Tags)) != 2 {
-		t.Error("tags missing from state")
+	if len(tagStrings(t, stateModel(t, ctx, resp.State).TagsAll)) != 2 {
+		t.Error("tags_all missing from state")
 	}
 }
 
@@ -1574,6 +1664,9 @@ func fillNulls(m *CheckResourceModel) {
 	if m.Tags.ElementType(testContext()) == nil {
 		m.Tags = types.SetNull(types.StringType)
 	}
+	if m.TagsAll.ElementType(testContext()) == nil {
+		m.TagsAll = types.SetNull(types.StringType)
+	}
 	if m.RunLocations.ElementType(testContext()) == nil {
 		m.RunLocations = types.ListNull(types.StringType)
 	}
@@ -1597,6 +1690,7 @@ func TestBuildCreateRequest(t *testing.T) {
 	plan := baseModel()
 	plan.Enabled = types.BoolValue(false)
 	plan.Tags = mustSet(t, ctx, "a")
+	plan.TagsAll = mustSet(t, ctx, "a")
 	plan.RunLocations = mustList(t, ctx, "nam")
 	plan.SendHeaders, _ = types.MapValueFrom(ctx, types.StringType, map[string]string{"X": "1"})
 	plan.ReceiveHeaders, _ = types.MapValueFrom(ctx, types.StringType, map[string]string{"Y": "2"})
@@ -1648,12 +1742,6 @@ func TestBuildCreateRequest(t *testing.T) {
 	plan.Enabled = types.BoolValue(true)
 	if req := r.buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags); req.Enabled != "active" {
 		t.Errorf("enabled = %q, want active", req.Enabled)
-	}
-}
-
-func TestNormalizeURL(t *testing.T) {
-	if normalizeURL("https://x/") != normalizeURL("https://x") {
-		t.Error("trailing slash should be ignored")
 	}
 }
 

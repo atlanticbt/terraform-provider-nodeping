@@ -1,4 +1,4 @@
-.PHONY: build test test-acc cover lint fmt vet vulncheck tidy install clean help
+.PHONY: build test test-acc test-acc-subaccount cover lint fmt vet vulncheck tidy install clean help
 
 BINARY      := terraform-provider-nodeping
 VERSION     ?= dev
@@ -34,7 +34,15 @@ cover:
 #
 # Requires NODEPING_API_TOKEN for a DEDICATED TEST SUBACCOUNT. These tests
 # create and destroy live checks and contacts. Never point them at a client
-# subaccount or the main account.
+# subaccount or the main account. A token scoped to the test subaccount is
+# strongly preferred over the parent token: a scoped token cannot reach a
+# sibling account even if a test is misconfigured.
+#
+# This target does NOT create a subaccount — see test-acc-subaccount.
+#
+# Tests that need an optional fixture (NODEPING_TEST_CHECK_ID,
+# NODEPING_TEST_CONTACT_ID, NODEPING_TEST_CUSTOMER_ID) skip when it is absent,
+# so a partial run is useful rather than a hard failure.
 test-acc:
 	@test -n "$(TOFU_BIN)" || { echo "tofu not found; set TOFU_BIN"; exit 1; }
 	@test -n "$$NODEPING_API_TOKEN" || { echo "NODEPING_API_TOKEN is not set"; exit 1; }
@@ -43,6 +51,22 @@ test-acc:
 	TF_ACC_PROVIDER_HOST=registry.opentofu.org \
 	TF_ACC_PROVIDER_NAMESPACE=hashicorp \
 	go test ./... -v -timeout 30m
+
+# !!! CREATES AND DESTROYS A REAL, BILLABLE NODEPING SUBACCOUNT !!!
+#
+# Separated from test-acc behind its own build tag so that an ordinary
+# acceptance run cannot do this by accident. Destroying a subaccount destroys
+# every check, contact and stored result inside it, so the token this runs with
+# decides the blast radius: use one scoped to a disposable test account, never
+# the parent token, which owns every client subaccount.
+test-acc-subaccount:
+	@test -n "$(TOFU_BIN)" || { echo "tofu not found; set TOFU_BIN"; exit 1; }
+	@test -n "$$NODEPING_API_TOKEN" || { echo "NODEPING_API_TOKEN is not set"; exit 1; }
+	TF_ACC=1 \
+	TF_ACC_TERRAFORM_PATH=$(TOFU_BIN) \
+	TF_ACC_PROVIDER_HOST=registry.opentofu.org \
+	TF_ACC_PROVIDER_NAMESPACE=hashicorp \
+	go test -tags acceptance_subaccount ./internal/resources/subaccount/ -v -timeout 30m
 
 lint:
 	go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run --timeout 5m ./...
@@ -82,6 +106,7 @@ help:
 	@echo "test       - Run unit tests with race detector"
 	@echo "cover      - Run tests and write coverage.out/coverage.html"
 	@echo "test-acc   - Run acceptance tests against a real tofu binary (needs NODEPING_API_TOKEN)"
+	@echo "test-acc-subaccount - Acceptance test that CREATES AND DESTROYS A BILLABLE SUBACCOUNT"
 	@echo "lint       - Run golangci-lint"
 	@echo "fmt        - Format Go code"
 	@echo "vet        - Run go vet"

@@ -299,6 +299,11 @@ func TestCreate_RejectsAScheduleWithNoDays(t *testing.T) {
 	if !resp.Diagnostics.HasError() {
 		t.Fatal("expected a diagnostic")
 	}
+	// Nothing was sent, so nothing exists in NodePing and nothing belongs in
+	// state -- the partial-state write must not fire for a pre-flight rejection.
+	if !resp.State.Raw.IsNull() {
+		t.Fatalf("state must stay empty when no schedule was created, got %v", resp.State.Raw)
+	}
 }
 
 func TestCreate_ReportsAPIFailures(t *testing.T) {
@@ -319,6 +324,83 @@ func TestCreate_ReportsAPIFailures(t *testing.T) {
 	}
 	if !strings.Contains(resp.Diagnostics.Errors()[0].Detail(), "bad schedule") {
 		t.Fatalf("expected the API message to surface: %v", resp.Diagnostics)
+	}
+}
+
+func TestCreate_RecordsTheScheduleIDWhenTheResponseCannotBeDecoded(t *testing.T) {
+	ctx := context.Background()
+
+	// NodePing accepted the PUT, so the schedule exists, but the body it sent
+	// back is not one the client can decode. This is how three schedules were
+	// orphaned: the provider returned the error without writing state, and
+	// OpenTofu could not destroy an object it had never recorded.
+	r := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		if _, err := io.WriteString(w, `{"data":"not-an-object"}`); err != nil {
+			t.Errorf("write failed: %v", err)
+		}
+	})
+
+	resp := &resource.CreateResponse{State: newState(t, ctx, nil)}
+	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, businessHoursPlan())}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the undecodable response to be reported")
+	}
+
+	got := decodeState(t, ctx, resp.State)
+	if got.ID.ValueString() != "BusinessHours" {
+		t.Fatalf("state must carry the schedule ID so the next plan can reconcile it, got %q", got.ID.ValueString())
+	}
+}
+
+func TestCreate_RecordsTheConfiguredCustomerIDAlongsideTheScheduleID(t *testing.T) {
+	ctx := context.Background()
+
+	// Read has to scope its lookup to the same subaccount the create used, so
+	// an explicitly configured customer_id belongs in the partial state too.
+	r := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		if _, err := io.WriteString(w, `{"data":"not-an-object"}`); err != nil {
+			t.Errorf("write failed: %v", err)
+		}
+	})
+
+	plan := businessHoursPlan()
+	plan.CustomerID = types.StringValue("SUBACC1")
+
+	resp := &resource.CreateResponse{State: newState(t, ctx, nil)}
+	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, plan)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the undecodable response to be reported")
+	}
+
+	got := decodeState(t, ctx, resp.State)
+	if got.CustomerID.ValueString() != "SUBACC1" {
+		t.Fatalf("state must carry the configured customer_id, got %q", got.CustomerID.ValueString())
+	}
+}
+
+func TestCreate_IdentityStaysNullWhenCreateFails(t *testing.T) {
+	ctx := context.Background()
+
+	// The partial state deliberately leaves identity alone. customer_id is
+	// often still unknown here, and an identity that disagrees with the one the
+	// next Read derives is rejected by the framework as "Unexpected Identity
+	// Change", which would block the recovery the partial state exists for.
+	r := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		if _, err := io.WriteString(w, `{"data":"not-an-object"}`); err != nil {
+			t.Errorf("write failed: %v", err)
+		}
+	})
+
+	resp := &resource.CreateResponse{State: newState(t, ctx, nil), Identity: newIdentity(t, ctx, nil)}
+	r.Create(ctx, resource.CreateRequest{Plan: newPlan(t, ctx, businessHoursPlan())}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected the undecodable response to be reported")
+	}
+	if !resp.Identity.Raw.IsFullyNull() {
+		t.Fatalf("identity must stay null on a failed create, got %v", resp.Identity.Raw)
 	}
 }
 

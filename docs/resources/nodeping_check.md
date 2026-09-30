@@ -158,6 +158,18 @@ resource "nodeping_check" "service" {
 
 - `type` - (Required) The type of check. See [Supported Check Types](#supported-check-types).
 - `target` - (Required for most types) The target URL, hostname, or IP address.
+
+  NodePing rewrites URL targets into a canonical form for `HTTP`, `HTTPADV`, `HTTPCONTENT`,
+  `HTTPPARSE`, `SSL`, `AUDIO`, `MONGODB`, `PGSQL` and `REDIS` checks: it lower-cases the scheme and
+  host and gives an empty path a `/`, so `https://EXAMPLE.com` is stored as `https://example.com/`.
+  The provider recognises those rewrites and does not report them as a change, so either spelling
+  is stable in configuration. Surrounding whitespace is trimmed for every check type. Other types
+  store the target exactly as given, including `WEBSOCKET`, `FTP`, `RDAP`, `SIP` and `WHOIS`, which
+  accept a URL but do not canonicalise it.
+
+  An imported check records the target as NodePing returned it, which is the canonical form. That
+  is the one attribute an import round trip cannot reproduce verbatim when the configuration spells
+  it differently; the following plan is empty either way.
 - `label` - (Optional) Display label for the check. Defaults to target.
 - `enabled` - (Optional) Whether the check is enabled. Defaults to `false`.
 - `public` - (Optional) Enable public reports. Defaults to `false`.
@@ -176,7 +188,21 @@ resource "nodeping_check" "service" {
 
 ### Tagging
 
-- `tags` - (Optional) List of tags for grouping checks.
+- `tags` - (Optional) Set of tags for grouping checks. This holds exactly what the configuration
+  declares; the provider's `default_tags` are not merged into it.
+- `tags_all` - (Read-only) The set actually applied to the check: `tags` plus the provider's
+  `default_tags`, with duplicates removed. This is what is sent to NodePing, so it is the value to
+  reference from outputs or other resources.
+
+The split exists because Terraform requires an optional argument's planned value to match the
+configuration. Merging `default_tags` into `tags` was rejected as an invalid plan as soon as a
+check declared any tags of its own. It is the same arrangement the AWS provider uses.
+
+On refresh the provider works backwards from what NodePing returns: `tags_all` is taken from the
+API, and `tags` is derived by removing the configured `default_tags`. A tag you declare that
+happens to also be a default is kept in `tags` rather than being absorbed into the defaults, so it
+does not disappear from your configuration on the next plan. On import there is no prior state to
+consult, so the defaults are removed unconditionally.
 
 ### Notifications Block
 
@@ -375,7 +401,9 @@ resource "nodeping_check" "pgsql" {
 ## Attribute Reference
 
 - `id` - The unique identifier of the check.
-- `customer_id` - The customer ID (account ID) that owns this check.
+- `customer_id` - The customer ID (account ID) that owns this check. Set it to place the check in a
+  SubAccount; omit it to use the account the provider token belongs to. Changing it replaces the
+  check, and an empty string is rejected rather than read as "no SubAccount".
 - `state` - Current state: `0` (failing) or `1` (passing).
 - `created` - Creation timestamp (milliseconds).
 - `modified` - Last modification timestamp (milliseconds).

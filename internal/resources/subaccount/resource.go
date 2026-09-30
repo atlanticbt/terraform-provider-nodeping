@@ -86,6 +86,10 @@ func (r *SubaccountResource) Create(ctx context.Context, req resource.CreateRequ
 
 	tflog.Debug(ctx, "Created subaccount", map[string]interface{}{"id": id})
 
+	// A billable account now exists. Everything below can still fail and
+	// return, so its ID reaches state before any of it runs.
+	defer recordCreatedID(ctx, resp, id)
+
 	// POST does not accept `status` or `autodiagnotifications`, so anything the
 	// practitioner configured for those has to be applied with a follow-up PUT.
 	postCreate := client.AccountUpdateRequest{
@@ -97,8 +101,8 @@ func (r *SubaccountResource) Create(ctx context.Context, req resource.CreateRequ
 			resp.Diagnostics.AddError(
 				"Error Configuring Subaccount",
 				"The subaccount "+id+" was created but could not be configured: "+err.Error()+
-					". The subaccount now exists in NodePing but is not recorded in state; import it with "+
-					"'terraform import' or delete it in the NodePing dashboard before retrying.",
+					". It has been recorded in state under its ID; the next plan will either finish "+
+					"configuring it or destroy it, depending on the configuration.",
 			)
 			return
 		}
@@ -109,7 +113,7 @@ func (r *SubaccountResource) Create(ctx context.Context, req resource.CreateRequ
 		resp.Diagnostics.AddError(
 			"Error Reading Created Subaccount",
 			"The subaccount "+id+" was created but could not be read back: "+err.Error()+
-				". Import it with 'terraform import' to bring it under management.",
+				". It has been recorded in state under its ID; run the plan again to refresh it.",
 		)
 		return
 	}

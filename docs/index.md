@@ -10,9 +10,8 @@ description: |-
 The NodePing provider allows you to manage [NodePing](https://nodeping.com/) monitoring resources including contacts and checks.
 
 > **These reference pages are hand-written and lag the schema.** They do not yet cover
-> `default_tags`, per-resource `customer_id`, `tags` as a set rather than a list, or the
-> datasource filter arguments. The [README](../README.md) is authoritative until
-> `tfplugindocs` generation lands — see [roadmap](roadmap.md).
+> per-resource `customer_id` or the datasource filter arguments. The [README](../README.md) is
+> authoritative until `tfplugindocs` generation lands — see [roadmap](roadmap.md).
 >
 > Installation is via the ABT private mirror, not a public registry. The `source` address
 > below only resolves with a `provider_installation` block configured; see the README.
@@ -118,11 +117,21 @@ resource "nodeping_check" "example" {
   type   = "HTTP"
   target = "https://example.com"
   label  = "Example Check"
-  tags   = ["production"]  # Will be merged with default_tags
+  tags   = ["production"]
 }
 ```
 
-The resulting check will have tags: `["managed-by-terraform", "team-devops", "production"]`. Duplicate tags are automatically removed.
+The check is created with `["managed-by-terraform", "team-devops", "production"]`. Duplicates are removed.
+
+The merged set is exposed as `tags_all`, not `tags`. On the resource, `tags` keeps exactly what the
+configuration declares — Terraform requires an optional argument's planned value to match the
+configuration, so writing the merge back into `tags` produced an invalid plan for any check that
+declared tags of its own. Reference `nodeping_check.example.tags_all` when you need what NodePing
+actually stores.
+
+Changing `default_tags` re-plans every check the provider manages. A tag that is both a default and
+declared on a check stays in that check's `tags` when the default is later removed from the
+provider, because it was the configuration that asked for it.
 
 ## Schema
 
@@ -131,9 +140,8 @@ The resulting check will have tags: `["managed-by-terraform", "team-devops", "pr
 - `api_token` (String, Sensitive) - NodePing API token. Can also be set via `NODEPING_API_TOKEN` environment variable.
 - `customer_id` (String) - SubAccount customer ID for managing SubAccount resources. Can also be set via `NODEPING_CUSTOMER_ID` environment variable.
 - `api_url` (String) - NodePing API base URL. Defaults to `https://api.nodeping.com/api/1`. Can also be set via the `NODEPING_API_URL` environment variable. **Must use `https`** unless the host is a loopback address (`localhost`, `127.0.0.0/8`, `::1`), which is permitted for local mock servers. A plaintext `http` endpoint would send the API token as HTTP basic auth in cleartext on every request. The same check is applied to the environment variable, which no attribute validator can see.
-- `default_tags` (List of String) - Tags merged into every check this provider instance manages. Empty strings are rejected — a zero-length tag cannot be searched or filtered in NodePing and is almost always an unset variable.
+- `default_tags` (List of String) - Tags merged into every check this provider instance manages. They appear in each check's computed `tags_all`, never in its `tags`. Empty strings are rejected — a zero-length tag cannot be searched or filtered in NodePing and is almost always an unset variable.
 - `rate_limit` (Number) - Maximum requests per second to the NodePing API. Must be greater than `0`. Defaults to `10`.
 - `max_retries` (Number) - Maximum number of retries for failed requests. Must be `0` or greater; `0` disables retries. Defaults to `3`.
 - `retry_wait_min` (Number) - Minimum wait time in seconds between retries. Must be `0` or greater, and must not exceed `retry_wait_max`. Defaults to `1`.
 - `retry_wait_max` (Number) - Maximum wait time in seconds between retries. Must be `0` or greater. Defaults to `30`.
-- `default_tags` (List of String) - Default tags to apply to all resources that support tags (e.g., checks). These tags are merged with resource-specific tags.
