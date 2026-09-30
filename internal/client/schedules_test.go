@@ -228,7 +228,7 @@ func TestValidateScheduleData_RejectsEmptyUnknownDaysAndBadTimes(t *testing.T) {
 	}
 
 	for _, bad := range []string{"25:00", "6:0", "0600", "6:60", "-1:00", "six"} {
-		err := validateScheduleData(map[string]ScheduleDay{"monday": {Time1: bad}})
+		err := validateScheduleData(map[string]ScheduleDay{"monday": {Time1: ScheduleTime(bad)}})
 		if err == nil {
 			t.Fatalf("expected %q to be rejected", bad)
 		}
@@ -674,5 +674,42 @@ func TestDeleteSchedule_ValidatesIDBeforeCallingTheAPI(t *testing.T) {
 
 	if err := c.DeleteSchedule(context.Background(), "  "); err == nil {
 		t.Fatal("expected a validation error")
+	}
+}
+
+// A day with no hours comes back as {"time1": false, "time2": false,
+// "disabled": true}. Decoding the times as strings made the whole schedule
+// unreadable (the live "Business Hours" schedule).
+func TestScheduleUnmarshal_DisabledDayWithFalseTimesDecodes(t *testing.T) {
+	var s Schedule
+	body := `{"monday":{"time1":"08:00","time2":"17:00","exclude":false,"disabled":false,"allday":false},"sunday":{"time1":false,"time2":false,"exclude":false,"disabled":true,"allday":false}}`
+	if err := json.Unmarshal([]byte(body), &s); err != nil {
+		t.Fatalf("should decode a day whose times are false: %v", err)
+	}
+	sunday := s.Data["sunday"]
+	if sunday.Time1 != "" || sunday.Time2 != "" || !sunday.Disabled.Bool() {
+		t.Fatalf("sunday decoded as %+v, want empty times and disabled", sunday)
+	}
+	if s.Data["monday"].Time1 != "08:00" {
+		t.Fatalf("monday decoded as %+v", s.Data["monday"])
+	}
+}
+
+func TestScheduleTime_RejectsUnsupportedShapes(t *testing.T) {
+	for _, body := range []string{`true`, `12`, `{}`, `[]`} {
+		var v ScheduleTime
+		if err := json.Unmarshal([]byte(body), &v); err == nil {
+			t.Errorf("%s: expected an error", body)
+		}
+	}
+}
+
+func TestScheduleTime_EmptyIsOmittedOnWrite(t *testing.T) {
+	out, err := json.Marshal(ScheduleDay{Time1: "", Time2: "17:00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), `"time1"`) || !strings.Contains(string(out), `"time2":"17:00"`) {
+		t.Fatalf("encoded as %s, want time1 omitted and time2 kept", out)
 	}
 }

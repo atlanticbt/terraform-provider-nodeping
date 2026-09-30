@@ -386,6 +386,14 @@ func contactName(name string) types.String {
 // newAddressFromModel converts a planned address block into a NodePing
 // "newaddresses" entry.
 func newAddressFromModel(ctx context.Context, addr AddressModel, diags *diag.Diagnostics) client.NewAddress {
+	// Existing owner and login addresses have no type, so the attribute is
+	// Optional, but NodePing cannot create an address without one.
+	if addr.Type.IsNull() || addr.Type.ValueString() == "" {
+		diags.AddError(
+			"Missing Address Type",
+			fmt.Sprintf("The new address %q has no type. Set type on every address block that NodePing has not created yet.", addr.Address.ValueString()),
+		)
+	}
 	newAddr := client.NewAddress{
 		Address:       addr.Address.ValueString(),
 		Type:          addr.Type.ValueString(),
@@ -624,7 +632,7 @@ func mapAddressesToModel(ctx context.Context, apiAddresses map[string]client.Con
 func addressToModel(ctx context.Context, id string, addr client.ContactAddress, planned *AddressModel, diags *diag.Diagnostics) AddressModel {
 	model := AddressModel{
 		ID:            types.StringValue(id),
-		Type:          types.StringValue(addr.Type),
+		Type:          stringOrNull(addr.Type),
 		Address:       types.StringValue(addr.Address),
 		SuppressUp:    types.BoolValue(addr.SuppressUp),
 		SuppressDown:  types.BoolValue(addr.SuppressDown),
@@ -777,4 +785,11 @@ func (m addressIDPlanModifier) PlanModifyList(ctx context.Context, req planmodif
 	}
 
 	resp.PlanValue = list
+}
+
+func stringOrNull(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
 }

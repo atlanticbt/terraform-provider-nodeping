@@ -147,12 +147,12 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 				Optional:    true,
 			},
 			"custrole": schema.StringAttribute{
-				Description: "The permission role for this contact. Valid values: 'edit', 'view', 'notify'. Defaults to 'notify'.",
+				Description: "The permission role for this contact. Valid values: 'owner', 'edit', 'view', 'notify'. Defaults to 'notify'. 'owner' is an account's own login contact.",
 				Optional:    true,
 				Computed:    true,
 				Default:     stringdefault.StaticString("notify"),
 				Validators: []validator.String{
-					stringvalidator.OneOf("edit", "view", "notify"),
+					stringvalidator.OneOf("owner", "edit", "view", "notify"),
 				},
 			},
 		},
@@ -168,11 +168,15 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 							Description: "The unique identifier of the address, assigned by NodePing.",
 							Computed:    true,
 						},
+						// Optional because NodePing returns owner and login
+						// addresses with no type; a new address still needs one,
+						// which newAddressFromModel enforces.
 						"type": schema.StringAttribute{
 							Description: "The type of address. Commonly used values: 'email', 'sms', 'voice', " +
 								"'webhook', 'slack', 'hipchat', 'pushover', 'pushbullet', 'rocketchat', 'pagerduty'. " +
-								"NodePing may support additional notification types; the value is validated by the API.",
-							Required: true,
+								"NodePing may support additional notification types; the value is validated by the API. " +
+								"Required for a new address; left unset on owner and login addresses, which NodePing stores without a type.",
+							Optional: true,
 						},
 						// Deliberately not Sensitive. Config generation writes
 						// `null # sensitive` for a sensitive attribute, which

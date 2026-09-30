@@ -223,10 +223,10 @@ func MapDay(apiDay client.ScheduleDay) *DayModel {
 		AllDay:   types.BoolValue(apiDay.AllDay.Bool()),
 	}
 	if apiDay.Time1 != "" {
-		day.Time1 = types.StringValue(apiDay.Time1)
+		day.Time1 = types.StringValue(string(apiDay.Time1))
 	}
 	if apiDay.Time2 != "" {
-		day.Time2 = types.StringValue(apiDay.Time2)
+		day.Time2 = types.StringValue(string(apiDay.Time2))
 	}
 	return day
 }

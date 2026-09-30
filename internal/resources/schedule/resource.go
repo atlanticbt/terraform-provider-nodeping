@@ -337,8 +337,8 @@ func daysFromModel(model *ScheduleResourceModel) map[string]client.ScheduleDay {
 			continue
 		}
 		data[name] = client.ScheduleDay{
-			Time1:    day.Time1.ValueString(),
-			Time2:    day.Time2.ValueString(),
+			Time1:    client.ScheduleTime(day.Time1.ValueString()),
+			Time2:    client.ScheduleTime(day.Time2.ValueString()),
 			Exclude:  client.ScheduleFlexBool(day.Exclude.ValueBool()),
 			Disabled: client.ScheduleFlexBool(day.Disabled.ValueBool()),
 			AllDay:   client.ScheduleFlexBool(day.AllDay.ValueBool()),
@@ -394,8 +394,8 @@ func mapDaysForRead(model *ScheduleResourceModel, apiDays map[string]client.Sche
 // practitioner's configuration is not silently erased by a terse response.
 func dayToModel(apiDay client.ScheduleDay, planned *DayModel) *DayModel {
 	model := &DayModel{
-		Time1:    stringOrPlanned(apiDay.Time1, plannedTime1(planned)),
-		Time2:    stringOrPlanned(apiDay.Time2, plannedTime2(planned)),
+		Time1:    stringOrPlanned(string(apiDay.Time1), plannedTime1(planned)),
+		Time2:    stringOrPlanned(string(apiDay.Time2), plannedTime2(planned)),
 		Exclude:  types.BoolValue(apiDay.Exclude.Bool()),
 		Disabled: types.BoolValue(apiDay.Disabled.Bool()),
 		AllDay:   types.BoolValue(apiDay.AllDay.Bool()),

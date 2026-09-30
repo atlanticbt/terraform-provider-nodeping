@@ -333,3 +333,23 @@ func TestGetCheckNotFoundUsesErrorsAs(t *testing.T) {
 		t.Fatalf("expected *NotFoundError, got %T (%v)", err, err)
 	}
 }
+
+// NodePing returns "queue": false on every disabled check, where an enabled one
+// carries a queue name. Decoding it as a string made every disabled check
+// unreadable, so disabling a check broke the next refresh.
+func TestGetCheck_DisabledCheckWithBooleanQueueDecodes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"_id":"201205050153W2Q4C-0J2HSIRF","customer_id":"201205050153W2Q4C","label":"Disabled","type":"HTTPADV","enable":"inactive","queue":false,"parameters":{"target":"https://example.com","statuscode":403}}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(ClientConfig{APIToken: "test-token", BaseURL: server.URL})
+	check, err := c.GetCheck(context.Background(), "201205050153W2Q4C-0J2HSIRF")
+	if err != nil {
+		t.Fatalf("should decode a disabled check when queue is a boolean: %v", err)
+	}
+	if check.Enabled != "inactive" {
+		t.Errorf("enable = %q, want inactive", check.Enabled)
+	}
+}

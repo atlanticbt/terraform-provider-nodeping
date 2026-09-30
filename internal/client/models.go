@@ -55,12 +55,12 @@ func numberFromJSON(raw json.RawMessage) (json.Number, bool) {
 }
 
 type Contact struct {
-	ID         string                    `json:"_id,omitempty"`
-	Type       string                    `json:"type,omitempty"`
-	CustomerID string                    `json:"customer_id,omitempty"`
-	Name       string                    `json:"name,omitempty"`
-	CustRole   string                    `json:"custrole,omitempty"`
-	Addresses  map[string]ContactAddress `json:"addresses,omitempty"`
+	ID         string           `json:"_id,omitempty"`
+	Type       string           `json:"type,omitempty"`
+	CustomerID string           `json:"customer_id,omitempty"`
+	Name       string           `json:"name,omitempty"`
+	CustRole   string           `json:"custrole,omitempty"`
+	Addresses  ContactAddresses `json:"addresses,omitempty"`
 }
 
 type ContactAddress struct {
@@ -78,12 +78,12 @@ type ContactAddress struct {
 	// Mute keeps omitempty: a nil RawMessage means "not specified". Callers
 	// that want to clear a mute must send an explicit []byte("false") rather
 	// than leaving the field nil.
-	Mute         json.RawMessage   `json:"mute,omitempty"`
-	Action       string            `json:"action,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	QueryStrings map[string]string `json:"querystrings,omitempty"`
-	Data         interface{}       `json:"data,omitempty"`
-	Priority     *int              `json:"priority,omitempty"`
+	Mute         json.RawMessage `json:"mute,omitempty"`
+	Action       string          `json:"action,omitempty"`
+	Headers      FlexStringMap   `json:"headers,omitempty"`
+	QueryStrings FlexStringMap   `json:"querystrings,omitempty"`
+	Data         interface{}     `json:"data,omitempty"`
+	Priority     *int            `json:"priority,omitempty"`
 }
 
 type NewAddress struct {
@@ -96,12 +96,12 @@ type NewAddress struct {
 	SuppressAll   bool   `json:"suppressall"`
 	// Mute is interface{}: encoding/json only treats a nil interface as empty,
 	// so an explicit `false` is still transmitted.
-	Mute         interface{}       `json:"mute,omitempty"`
-	Action       string            `json:"action,omitempty"`
-	Headers      map[string]string `json:"headers,omitempty"`
-	QueryStrings map[string]string `json:"querystrings,omitempty"`
-	Data         string            `json:"data,omitempty"`
-	Priority     *int              `json:"priority,omitempty"`
+	Mute         interface{}   `json:"mute,omitempty"`
+	Action       string        `json:"action,omitempty"`
+	Headers      FlexStringMap `json:"headers,omitempty"`
+	QueryStrings FlexStringMap `json:"querystrings,omitempty"`
+	Data         string        `json:"data,omitempty"`
+	Priority     *int          `json:"priority,omitempty"`
 }
 
 type ContactCreateRequest struct {
@@ -143,7 +143,6 @@ type Check struct {
 	Dep           interface{}              `json:"dep,omitempty"`
 	Mute          interface{}              `json:"mute,omitempty"`
 	Description   string                   `json:"description,omitempty"`
-	Queue         string                   `json:"queue,omitempty"`
 	UUID          string                   `json:"uuid,omitempty"`
 	RunLocations  interface{}              `json:"runlocations,omitempty"`
 	HomeLoc       interface{}              `json:"homeloc,omitempty"`
