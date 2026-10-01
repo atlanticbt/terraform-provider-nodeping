@@ -653,7 +653,7 @@ func TestCreate(t *testing.T) {
 			t.Errorf("bad request body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
+		_, _ = w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
 			"ZZ": apiAddr("email", "a@example.com"),
 			"AA": apiAddr("webhook", "https://hooks.example.com/b"),
 		}))
@@ -709,7 +709,7 @@ func TestCreateError(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"boom"}`))
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	})
 
 	plan := ContactResourceModel{
@@ -731,7 +731,7 @@ func TestCreateUsesConfiguredCustomerID(t *testing.T) {
 	var gotCustomerID string
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		gotCustomerID = req.URL.Query().Get("customerid")
-		w.Write(contactJSON("C1", "SUB1", "Example", nil))
+		_, _ = w.Write(contactJSON("C1", "SUB1", "Example", nil))
 	})
 
 	plan := ContactResourceModel{
@@ -759,7 +759,7 @@ func TestRead(t *testing.T) {
 	var gotCustomerID string
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		gotCustomerID = req.URL.Query().Get("customerid")
-		w.Write(contactJSON("C1", "SUB1", "Renamed", map[string]client.ContactAddress{
+		_, _ = w.Write(contactJSON("C1", "SUB1", "Renamed", map[string]client.ContactAddress{
 			"B2": apiAddr("email", "b@example.com"),
 			"A1": apiAddr("email", "a@example.com"),
 		}))
@@ -798,7 +798,7 @@ func TestReadNotFoundRemovesResource(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"not found"}`))
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
 	})
 
 	state := ContactResourceModel{ID: types.StringValue("C1"), CustomerID: types.StringNull(), Name: types.StringValue("x"), CustRole: types.StringValue("notify")}
@@ -816,7 +816,7 @@ func TestReadError(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"boom"}`))
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	})
 
 	state := ContactResourceModel{ID: types.StringValue("C1"), CustomerID: types.StringNull(), Name: types.StringValue("x"), CustRole: types.StringValue("notify")}
@@ -836,7 +836,7 @@ func TestUpdateTargetsTheEditedAddress(t *testing.T) {
 		if err := json.Unmarshal(body, &captured); err != nil {
 			t.Errorf("bad request body: %v", err)
 		}
-		w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
+		_, _ = w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
 			"A1": apiAddr("email", "a@example.com"),
 			"B2": apiAddr("email", "b-new@example.com"),
 			"C3": apiAddr("email", "c@example.com"),
@@ -891,8 +891,10 @@ func TestUpdateReorderDoesNotCrossAssignIDs(t *testing.T) {
 	var captured client.ContactUpdateRequest
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
-		json.Unmarshal(body, &captured)
-		w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		_, _ = w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
 			"A1": apiAddr("email", "a@example.com"),
 			"B2": apiAddr("webhook", "https://hooks.example.com/b"),
 			"D4": apiAddr("sms", "+15551230000"),
@@ -938,7 +940,7 @@ func TestUpdateError(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"boom"}`))
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	})
 
 	state := ContactResourceModel{ID: types.StringValue("C1"), CustomerID: types.StringNull(), Name: types.StringValue("x"), CustRole: types.StringValue("notify")}
@@ -957,7 +959,7 @@ func TestDelete(t *testing.T) {
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		gotCustomerID = req.URL.Query().Get("customerid")
 		gotMethod = req.Method
-		w.Write([]byte(`{"ok":true}`))
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 
 	state := ContactResourceModel{ID: types.StringValue("C1"), CustomerID: types.StringValue("SUB1"), Name: types.StringValue("x"), CustRole: types.StringValue("notify")}
@@ -975,7 +977,7 @@ func TestDeleteError(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"boom"}`))
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	})
 
 	state := ContactResourceModel{ID: types.StringValue("C1"), CustomerID: types.StringNull(), Name: types.StringValue("x"), CustRole: types.StringValue("notify")}
@@ -992,7 +994,7 @@ func TestImportStateSubAccount(t *testing.T) {
 	var gotCustomerID string
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		gotCustomerID = req.URL.Query().Get("customerid")
-		w.Write(contactJSON("C1", "SUB1", "Example", map[string]client.ContactAddress{
+		_, _ = w.Write(contactJSON("C1", "SUB1", "Example", map[string]client.ContactAddress{
 			"A1": apiAddr("email", "a@example.com"),
 		}))
 	})
@@ -1022,7 +1024,7 @@ func TestImportStatePlain(t *testing.T) {
 		if q := req.URL.Query().Get("customerid"); q != "" {
 			t.Errorf("unexpected customerid query param %q", q)
 		}
-		w.Write(contactJSON("C1", "ROOT", "Example", nil))
+		_, _ = w.Write(contactJSON("C1", "ROOT", "Example", nil))
 	})
 
 	resp := &resource.ImportStateResponse{State: emptyState(t, ctx, nil)}
@@ -1039,7 +1041,7 @@ func TestImportStateInvalid(t *testing.T) {
 	ctx := context.Background()
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"not found"}`))
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
 	})
 
 	for _, id := range []string{"a:b:c", ""} {
@@ -1115,8 +1117,10 @@ func TestUpdateSendsExplicitUnmute(t *testing.T) {
 	var raw map[string]interface{}
 	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
 		body, _ := io.ReadAll(req.Body)
-		json.Unmarshal(body, &raw)
-		w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		_, _ = w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
 			"A1": apiAddr("email", "a@example.com"),
 		}))
 	})
@@ -1149,5 +1153,180 @@ func TestUpdateSendsExplicitUnmute(t *testing.T) {
 	}
 	if mute != false {
 		t.Fatalf("mute = %v, want false", mute)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// live run findings -- the address set is a full replacement, and an absent
+// name is absent
+// ---------------------------------------------------------------------------
+
+// NodePing deletes any address left out of the `addresses` map. When every
+// planned address is new -- swapping the only email for an SMS, say -- the map
+// is empty and `omitempty` dropped it from the request, so NodePing added the
+// new address and kept the old one. The apply then failed with "block count
+// changed from 1 to 2".
+func TestUpdateSendsEmptyAddressMapWhenEveryAddressIsNew(t *testing.T) {
+	ctx := context.Background()
+
+	var raw map[string]json.RawMessage
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Errorf("bad request body: %v", err)
+		}
+		_, _ = w.Write(contactJSON("C1", "CUST1", "Example", map[string]client.ContactAddress{
+			"N9": apiAddr("sms", "+15555550120"),
+		}))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringValue("Example"),
+		CustRole:   types.StringValue("notify"),
+		Addresses:  []AddressModel{addrModel("A1", "email", "a@example.com")},
+	}
+
+	plan := state
+	plan.Addresses = []AddressModel{addrModel("", "sms", "+15555550120")}
+
+	resp := &resource.UpdateResponse{State: emptyState(t, ctx, &state)}
+	r.Update(ctx, resource.UpdateRequest{Plan: emptyPlan(t, ctx, plan), State: emptyState(t, ctx, &state)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update diagnostics: %v", resp.Diagnostics)
+	}
+
+	addresses, present := raw["addresses"]
+	if !present {
+		t.Fatalf("addresses was omitted, so the replaced address would survive: %v", raw)
+	}
+	if string(addresses) != "{}" {
+		t.Fatalf("addresses = %s, want an empty object", addresses)
+	}
+}
+
+// Reducing a contact to zero addresses is refused by NodePing with "Account
+// must have at least one 'owner' contact", and the request leaves the addresses
+// in place. Catching it before the call turns an unrelated-sounding API message
+// followed by "block count changed from 0 to 1" into one accurate diagnostic.
+func TestUpdateRejectsRemovingEveryAddress(t *testing.T) {
+	ctx := context.Background()
+
+	called := false
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		called = true
+		_, _ = w.Write(contactJSON("C1", "CUST1", "Example", nil))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringValue("Example"),
+		CustRole:   types.StringValue("notify"),
+		Addresses:  []AddressModel{addrModel("A1", "email", "a@example.com")},
+	}
+
+	plan := state
+	plan.Addresses = nil
+
+	resp := &resource.UpdateResponse{State: emptyState(t, ctx, &state)}
+	r.Update(ctx, resource.UpdateRequest{Plan: emptyPlan(t, ctx, plan), State: emptyState(t, ctx, &state)}, resp)
+
+	if !resp.Diagnostics.HasError() {
+		t.Fatal("expected an error when every address is removed")
+	}
+	if called {
+		t.Error("the API was called for an update NodePing cannot perform")
+	}
+	if summary := resp.Diagnostics.Errors()[0].Summary(); summary != "Cannot Remove Every Contact Address" {
+		t.Errorf("unexpected diagnostic summary %q", summary)
+	}
+}
+
+// A contact that has no addresses and is gaining none must not send an empty
+// `addresses` object: NodePing refuses that too. A nil map marshals to null,
+// which it reads as "not specified".
+func TestUpdateOmitsAddressMapWhenContactHasNoAddresses(t *testing.T) {
+	ctx := context.Background()
+
+	var raw map[string]json.RawMessage
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		body, _ := io.ReadAll(req.Body)
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		_, _ = w.Write(contactJSON("C1", "CUST1", "Renamed", nil))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringValue("Example"),
+		CustRole:   types.StringValue("notify"),
+	}
+
+	plan := state
+	plan.Name = types.StringValue("Renamed")
+
+	resp := &resource.UpdateResponse{State: emptyState(t, ctx, &state)}
+	r.Update(ctx, resource.UpdateRequest{Plan: emptyPlan(t, ctx, plan), State: emptyState(t, ctx, &state)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("update diagnostics: %v", resp.Diagnostics)
+	}
+
+	if string(raw["addresses"]) != "null" {
+		t.Fatalf("addresses = %s, want null", raw["addresses"])
+	}
+}
+
+// A contact created without a name comes back with no name field at all.
+// Writing the empty string into an Optional, non-Computed attribute made every
+// refresh plan an update from null to "" that no apply could settle.
+func TestReadMapsAnAbsentNameToNull(t *testing.T) {
+	ctx := context.Background()
+
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write(contactJSON("C1", "CUST1", "", map[string]client.ContactAddress{
+			"A1": apiAddr("email", "a@example.com"),
+		}))
+	})
+
+	state := ContactResourceModel{
+		ID:         types.StringValue("C1"),
+		CustomerID: types.StringValue("CUST1"),
+		Name:       types.StringNull(),
+		CustRole:   types.StringValue("notify"),
+		Addresses:  []AddressModel{addrModel("A1", "email", "a@example.com")},
+	}
+
+	resp := &resource.ReadResponse{State: emptyState(t, ctx, &state)}
+	r.Read(ctx, resource.ReadRequest{State: emptyState(t, ctx, &state)}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("read diagnostics: %v", resp.Diagnostics)
+	}
+
+	if got := decodeState(t, ctx, resp.State); !got.Name.IsNull() {
+		t.Fatalf("name = %q, want null", got.Name.ValueString())
+	}
+}
+
+func TestImportStateMapsAnAbsentNameToNull(t *testing.T) {
+	ctx := context.Background()
+
+	r, _ := newTestResource(t, func(w http.ResponseWriter, req *http.Request) {
+		_, _ = w.Write(contactJSON("C1", "CUST1", "", map[string]client.ContactAddress{
+			"A1": apiAddr("email", "a@example.com"),
+		}))
+	})
+
+	resp := &resource.ImportStateResponse{State: emptyState(t, ctx, nil)}
+	r.ImportState(ctx, resource.ImportStateRequest{ID: "C1"}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("import diagnostics: %v", resp.Diagnostics)
+	}
+
+	if got := decodeState(t, ctx, resp.State); !got.Name.IsNull() {
+		t.Fatalf("name = %q, want null", got.Name.ValueString())
 	}
 }

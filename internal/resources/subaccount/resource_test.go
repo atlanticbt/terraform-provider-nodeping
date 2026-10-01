@@ -183,13 +183,15 @@ func TestSchemaMarksCreateOnlyFieldsAndComputedReads(t *testing.T) {
 		t.Fatalf("schema is not a valid implementation: %v", diags)
 	}
 
-	for _, name := range []string{"contactname", "email"} {
+	// Optional so an existing subaccount can be imported: NodePing never
+	// returns them. Create still requires them, enforced in ModifyPlan.
+	for _, name := range []string{"contactname", "email", "location"} {
 		attr, ok := s.Attributes[name]
 		if !ok {
 			t.Fatalf("expected attribute %q", name)
 		}
-		if !attr.IsRequired() {
-			t.Errorf("%q should be required", name)
+		if attr.IsRequired() || !attr.IsOptional() {
+			t.Errorf("%q should be optional", name)
 		}
 	}
 
@@ -243,10 +245,10 @@ func TestConfigureAcceptsClientAndRejectsOtherTypes(t *testing.T) {
 	}
 }
 
-// replaceRequired runs the create-only plan modifier against a state/plan pair
+// planCreateOnly runs the create-only plan modifier against a state/plan pair
 // for the `contactname` attribute. A nil stateValue models a resource that has
 // no prior state at all, which is what a create looks like.
-func replaceRequired(t *testing.T, ctx context.Context, stateValue *types.String, planValue types.String) bool {
+func planCreateOnly(t *testing.T, ctx context.Context, stateValue *types.String, planValue types.String) *planmodifier.StringResponse {
 	t.Helper()
 
 	planned := stateModel()
@@ -273,39 +275,48 @@ func replaceRequired(t *testing.T, ctx context.Context, stateValue *types.String
 		ConfigValue: planValue,
 	}
 	resp := &planmodifier.StringResponse{PlanValue: planValue}
-	requiresReplaceIfWasSet().PlanModifyString(ctx, req, resp)
-
-	return resp.RequiresReplace
+	unchangeableAfterCreate().PlanModifyString(ctx, req, resp)
+	return resp
 }
 
-func TestRequiresReplaceIfWasSet(t *testing.T) {
+// Replacing a subaccount deletes every check and contact in it, and NodePing
+// can neither update nor return contactname and email. So a change to either
+// on an existing subaccount is refused at plan time instead of replacing it.
+func TestUnchangeableAfterCreate(t *testing.T) {
 	ctx := context.Background()
 
-	if requiresReplaceIfWasSet().Description(ctx) == "" ||
-		requiresReplaceIfWasSet().MarkdownDescription(ctx) == "" {
+	if unchangeableAfterCreate().Description(ctx) == "" ||
+		unchangeableAfterCreate().MarkdownDescription(ctx) == "" {
 		t.Error("expected the modifier to describe itself")
 	}
 
 	empty := types.StringValue("")
 	prior := types.StringValue("Example Operations")
+	null := types.StringNull()
 
 	cases := []struct {
-		name  string
-		state *types.String
-		plan  types.String
-		want  bool
+		name    string
+		state   *types.String
+		plan    types.String
+		wantErr bool
 	}{
-		{"create has no prior state", nil, types.StringValue("Example Operations"), false},
-		{"after import the prior value is null", &types.String{}, types.StringValue("Example Operations"), false},
-		{"empty prior value", &empty, types.StringValue("Example Operations"), false},
-		{"unchanged", &prior, types.StringValue("Example Operations"), false},
-		{"changed forces replacement", &prior, types.StringValue("Someone Else"), true},
+		{"should allow any value when creating", nil, types.StringValue("Example Operations"), false},
+		{"should record the value when prior state is null after an import", &null, types.StringValue("Example Operations"), false},
+		{"should record the value when the prior value is empty", &empty, types.StringValue("Example Operations"), false},
+		{"should be a no-op when unchanged", &prior, types.StringValue("Example Operations"), false},
+		{"should allow removing the value from configuration", &prior, types.StringNull(), false},
+		{"should allow an unknown planned value", &prior, types.StringUnknown(), false},
+		{"should refuse a change on an existing subaccount", &prior, types.StringValue("Someone Else"), true},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := replaceRequired(t, ctx, tc.state, tc.plan); got != tc.want {
-				t.Errorf("RequiresReplace = %v, want %v", got, tc.want)
+			resp := planCreateOnly(t, ctx, tc.state, tc.plan)
+			if resp.RequiresReplace {
+				t.Error("must never plan a replacement: replacing a subaccount deletes everything in it")
+			}
+			if got := resp.Diagnostics.HasError(); got != tc.wantErr {
+				t.Errorf("error = %v, want %v (%v)", got, tc.wantErr, resp.Diagnostics)
 			}
 		})
 	}

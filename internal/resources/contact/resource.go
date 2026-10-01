@@ -149,7 +149,7 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 	if contact.CustomerID != "" {
 		state.CustomerID = types.StringValue(contact.CustomerID)
 	}
-	state.Name = types.StringValue(contact.Name)
+	state.Name = contactName(contact.Name)
 	state.CustRole = types.StringValue(contact.CustRole)
 
 	state.Addresses = mapAddressesToModel(ctx, contact.Addresses, state.Addresses, &resp.Diagnostics)
@@ -199,7 +199,22 @@ func (r *ContactResource) Update(ctx context.Context, req resource.UpdateRequest
 		}
 	}
 
-	if len(updateReq.Addresses) == 0 {
+	// NodePing rejects an update that would leave a contact with no addresses
+	// at all, with "Account must have at least one 'owner' contact". Left to
+	// the API the request is refused and the addresses stay put, so say what
+	// happened here instead of letting the practitioner read a message about
+	// account owners.
+	if len(plan.Addresses) == 0 {
+		if len(state.Addresses) > 0 {
+			resp.Diagnostics.AddError(
+				"Cannot Remove Every Contact Address",
+				"NodePing refuses an update that leaves contact ID "+state.ID.ValueString()+
+					" with no addresses. Keep at least one address, or destroy the contact.",
+			)
+			return
+		}
+		// A contact that had no addresses and is gaining none must not send
+		// `addresses` at all; nil marshals to null, which NodePing ignores.
 		updateReq.Addresses = nil
 	}
 
@@ -341,7 +356,7 @@ func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportSt
 	state := ContactResourceModel{
 		ID:         types.StringValue(contact.ID),
 		CustomerID: customerIDValue,
-		Name:       types.StringValue(contact.Name),
+		Name:       contactName(contact.Name),
 		CustRole:   types.StringValue(contact.CustRole),
 	}
 
@@ -355,9 +370,30 @@ func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportSt
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
+// contactName maps the API's name field onto the optional `name` attribute.
+//
+// A contact created without a name comes back with no `name` key at all, and
+// writing the resulting empty string into state made every refresh plan an
+// update from null to "" that no apply could settle. `name` is Optional and not
+// Computed, so absent has to stay null.
+func contactName(name string) types.String {
+	if name == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(name)
+}
+
 // newAddressFromModel converts a planned address block into a NodePing
 // "newaddresses" entry.
 func newAddressFromModel(ctx context.Context, addr AddressModel, diags *diag.Diagnostics) client.NewAddress {
+	// Existing owner and login addresses have no type, so the attribute is
+	// Optional, but NodePing cannot create an address without one.
+	if addr.Type.IsNull() || addr.Type.ValueString() == "" {
+		diags.AddError(
+			"Missing Address Type",
+			fmt.Sprintf("The new address %q has no type. Set type on every address block that NodePing has not created yet.", addr.Address.ValueString()),
+		)
+	}
 	newAddr := client.NewAddress{
 		Address:       addr.Address.ValueString(),
 		Type:          addr.Type.ValueString(),
@@ -596,7 +632,7 @@ func mapAddressesToModel(ctx context.Context, apiAddresses map[string]client.Con
 func addressToModel(ctx context.Context, id string, addr client.ContactAddress, planned *AddressModel, diags *diag.Diagnostics) AddressModel {
 	model := AddressModel{
 		ID:            types.StringValue(id),
-		Type:          types.StringValue(addr.Type),
+		Type:          stringOrNull(addr.Type),
 		Address:       types.StringValue(addr.Address),
 		SuppressUp:    types.BoolValue(addr.SuppressUp),
 		SuppressDown:  types.BoolValue(addr.SuppressDown),
@@ -749,4 +785,11 @@ func (m addressIDPlanModifier) PlanModifyList(ctx context.Context, req planmodif
 	}
 
 	resp.PlanValue = list
+}
+
+func stringOrNull(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
 }

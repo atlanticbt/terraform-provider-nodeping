@@ -26,6 +26,8 @@ type Account struct {
 	Timezone         string
 	NextBillingDate  string
 	DefaultLocations []string
+	// EmailMe is "yes", "no", or "" when the response does not carry it.
+	EmailMe string
 }
 
 // accountWire mirrors Account with lenient field types. NodePing is
@@ -40,6 +42,7 @@ type accountWire struct {
 	Timezone         json.RawMessage `json:"timezone"`
 	NextBillingDate  json.RawMessage `json:"nextBillingDate"`
 	DefaultLocations []string        `json:"defaultlocations"`
+	EmailMe          json.RawMessage `json:"emailme"`
 }
 
 func (a *Account) UnmarshalJSON(data []byte) error {
@@ -55,6 +58,7 @@ func (a *Account) UnmarshalJSON(data []byte) error {
 	a.DefaultLocations = wire.DefaultLocations
 	a.Timezone = rawToString(wire.Timezone)
 	a.NextBillingDate = rawToString(wire.NextBillingDate)
+	a.EmailMe = emailMeFromRaw(wire.EmailMe)
 
 	created, err := rawToInt64(wire.CreationDate)
 	if err != nil {
@@ -63,6 +67,18 @@ func (a *Account) UnmarshalJSON(data []byte) error {
 	a.CreationDate = created
 
 	return nil
+}
+
+// emailMeFromRaw reads emailme, which NodePing returns as a boolean although
+// it is written as "yes" or "no".
+func emailMeFromRaw(raw json.RawMessage) string {
+	switch strings.Trim(strings.TrimSpace(string(raw)), `"`) {
+	case "true", "yes":
+		return "yes"
+	case "false", "no":
+		return "no"
+	}
+	return ""
 }
 
 // rawToString renders a JSON token as a plain string. A quoted string is

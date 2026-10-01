@@ -61,7 +61,7 @@ resource "nodeping_check" "dns" {
 ```hcl
 resource "nodeping_check" "ssl" {
   type        = "SSL"
-  target      = "example.com"
+  target      = "https://example.com"
   label       = "SSL Certificate Expiry"
   enabled     = true
   warningdays = 30
@@ -173,9 +173,14 @@ resource "nodeping_check" "service" {
 - `label` - (Optional) Display label for the check. Defaults to target.
 - `enabled` - (Optional) Whether the check is enabled. Defaults to `false`.
 - `public` - (Optional) Enable public reports. Defaults to `false`.
-- `interval` - (Optional) Check interval in minutes. Can be `0.25`, `0.5`, or any integer >= 1. Defaults to `15`.
+- `interval` - (Optional) Check interval in minutes. Can be `0.25`, `0.5`, or any integer >= 1. Defaults to `15`,
+  except `WHOIS` and `RDAP`, which default to `1440`. NodePing silently replaces a `WHOIS` interval
+  below `240` or an `RDAP` interval below `60` with `1440`, so the provider rejects those values at
+  plan time instead of letting them drift.
 - `threshold` - (Optional) Timeout in seconds. Defaults to `5`.
-- `sens` - (Optional) Number of rechecks before status change. Defaults to `2`.
+- `sens` - (Optional) Number of rechecks before status change. `0` changes status on the first
+  failed result. Defaults to `2`. Zero values of `sens`, `statuscode`, `warningdays`, `volumemin`
+  and `port` are sent as the string `"0"`, because NodePing treats a numeric `0` as empty.
 - `mute` - (Optional) Mute all notifications. Defaults to `false`.
 - `dep` - (Optional) Check ID for notification dependency.
 - `description` - (Optional) Description text (max 1000 characters).
@@ -225,7 +230,8 @@ is accepted everywhere — otherwise an imported PUSH check would not validate. 
 
 - `follow` - (Optional) Follow redirects (up to 4).
 - `method` - (Optional) HTTP method for HTTPADV: `GET`, `POST`, `PUT`, `HEAD`, `TRACE`, `CONNECT`.
-- `statuscode` - (Optional) Expected HTTP status code.
+- `statuscode` - (Optional) Expected HTTP status code, `100` to `599`. `0` is also accepted,
+  because NodePing returns it on some existing HTTPADV checks.
 - `sendheaders` - (Optional) Map of request headers. Not marked sensitive, so the values appear
   in plan output and in generated configuration. That is deliberate: a sensitive map is written
   as `null` by `tofu plan -generate-config-out`, and applying the result deletes the live headers.
@@ -240,6 +246,9 @@ is accepted everywhere — otherwise an imported PUSH check would not validate. 
 - `dnstoresolve` - (Optional) FQDN to resolve.
 - `dnssection` - (Optional) DNS section to check: `answer`, `authority`, `additional`, `edns_options`.
 - `dnsrd` - (Optional) Recursion Desired bit. Defaults to `true`.
+
+  The four DNS attributes apply to `DNS` and `DOHDOT` checks. `SPEC10DNS` checks keep none of them,
+  so setting one there produces a warning (an error for `dnsrd = true`).
 - `transport` - (Optional) Transport protocol: `udp`, `tcp`.
 
 ### SSL/TLS Arguments

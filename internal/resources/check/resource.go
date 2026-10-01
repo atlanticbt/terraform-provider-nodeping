@@ -359,6 +359,11 @@ func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 		return
 	}
 
+	planDefaultInterval(ctx, req, resp)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	var configTags types.Set
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("tags"), &configTags)...)
 	if resp.Diagnostics.HasError() {
@@ -381,6 +386,26 @@ func (r *CheckResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanR
 	}
 
 	merged := mergeTags(r.client.GetDefaultTags(), explicitTags)
+
+	// NodePing omits the tags key on a check that has never had any, which Read
+	// stores as null. An empty set means "send [] to clear every tag", and there
+	// is nothing to clear, so planning null keeps an untagged check from planning
+	// an update on every run.
+	if len(merged) == 0 && !req.State.Raw.IsNull() {
+		var priorAll types.Set
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("tags_all"), &priorAll)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if priorAll.IsNull() {
+			resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("tags_all"), types.SetNull(types.StringType))...)
+			if resp.Diagnostics.HasError() {
+				return
+			}
+			collapseNoOpPlan(ctx, req, resp)
+			return
+		}
+	}
 
 	tagsAll, diags := types.SetValueFrom(ctx, types.StringType, merged)
 	resp.Diagnostics.Append(diags...)
@@ -559,13 +584,25 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 		if b, isBool := value.(types.Bool); isBool && !b.ValueBool() {
 			return
 		}
-		if !allowed[checkType] {
-			resp.Diagnostics.AddAttributeError(
+		if allowed[checkType] {
+			return
+		}
+		// Other values only warn: NodePing keeps them when a check changes type
+		// and returns them on read (three live SSL checks carry a contentstring),
+		// so an error would make those checks unimportable.
+		if _, isBool := value.(types.Bool); !isBool {
+			resp.Diagnostics.AddAttributeWarning(
 				path.Root(name),
 				"Attribute Not Applicable To Check Type",
-				fmt.Sprintf("%s is only supported for %s checks, but the check type is %s.", name, kinds, checkType),
+				fmt.Sprintf("%s is only used by %s checks, but the check type is %s. NodePing stores it but does not act on it.", name, kinds, checkType),
 			)
+			return
 		}
+		resp.Diagnostics.AddAttributeError(
+			path.Root(name),
+			"Attribute Not Applicable To Check Type",
+			fmt.Sprintf("%s is only supported for %s checks, but the check type is %s.", name, kinds, checkType),
+		)
 	}
 
 	const contentKinds = "HTTPCONTENT, HTTPADV, HTTPPARSE, DNS and DOHDOT"
@@ -573,7 +610,7 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 	notApplicable("regex", config.Regex, contentMatchTypes, contentKinds)
 	notApplicable("invert", config.Invert, contentMatchTypes, contentKinds)
 
-	const dnsKinds = "DNS, DOHDOT and SPEC10DNS"
+	const dnsKinds = "DNS and DOHDOT"
 	notApplicable("dnstype", config.DNSType, dnsTypes, dnsKinds)
 	notApplicable("dnstoresolve", config.DNSToResolve, dnsTypes, dnsKinds)
 	notApplicable("dnssection", config.DNSSection, dnsTypes, dnsKinds)
@@ -581,6 +618,15 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 
 	notApplicable("warningdays", config.WarningDays, warningDaysTypes,
 		"SSL, WHOIS, RDAP, SMTP, IMAP4, POP3, DOHDOT and SPEC10RDDS")
+
+	if min, ok := minIntervalByType[checkType]; ok && isSet(config.Interval) && config.Interval.ValueFloat64() < min {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("interval"),
+			"Interval Below NodePing Minimum",
+			fmt.Sprintf("NodePing replaces a %s interval below %v minutes with %d, so %v would never settle. Use %v or more, or leave interval unset for %d.",
+				checkType, min, rewrittenInterval, config.Interval.ValueFloat64(), min, rewrittenInterval),
+		)
+	}
 }
 
 // validateHostCredentials applies the check level credential rules to every
@@ -661,7 +707,7 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 	}
 
 	if isSet(plan.Sens) {
-		req.Sens = int(plan.Sens.ValueInt64())
+		req.Sens = apiInt(plan.Sens.ValueInt64())
 	}
 
 	if isSet(plan.Mute) {
@@ -724,7 +770,7 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 	}
 
 	if isSet(plan.StatusCode) {
-		req.StatusCode = int(plan.StatusCode.ValueInt64())
+		req.StatusCode = apiInt(plan.StatusCode.ValueInt64())
 	}
 
 	if isSet(plan.SendHeaders) {
@@ -744,7 +790,7 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 	}
 
 	if isSet(plan.Port) {
-		req.Port = int(plan.Port.ValueInt64())
+		req.Port = apiInt(plan.Port.ValueInt64())
 	}
 
 	if isSet(plan.Username) {
@@ -792,7 +838,7 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 	}
 
 	if isSet(plan.WarningDays) {
-		req.WarningDays = int(plan.WarningDays.ValueInt64())
+		req.WarningDays = apiInt(plan.WarningDays.ValueInt64())
 	}
 
 	if isSet(plan.ServerName) {
@@ -921,7 +967,7 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 	}
 
 	if isSet(plan.VolumeMin) {
-		req.VolumeMin = plan.VolumeMin.ValueInt64()
+		req.VolumeMin = apiInt(plan.VolumeMin.ValueInt64())
 	}
 
 	for _, n := range plan.Notifications {
@@ -1716,5 +1762,31 @@ func parseBoolInterface(v interface{}) bool {
 		return val.String() != "0" && val.String() != ""
 	default:
 		return false
+	}
+}
+
+// apiInt renders a number for a check request. NodePing treats a JSON number 0
+// as empty: sens 0 fails the create, and statuscode or warningdays 0 is stored
+// as "". The string "0" is kept, so zero is sent as a string.
+func apiInt(v int64) interface{} {
+	if v == 0 {
+		return "0"
+	}
+	return v
+}
+
+// planDefaultInterval replaces the schema's default interval of 15 on check
+// types whose minimum is higher. NodePing would store rewrittenInterval, so
+// planning 15 would show a change on every run.
+func planDefaultInterval(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	var checkType types.String
+	var configInterval types.Float64
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("type"), &checkType)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("interval"), &configInterval)...)
+	if resp.Diagnostics.HasError() || !configInterval.IsNull() || !isSet(checkType) {
+		return
+	}
+	if _, ok := minIntervalByType[checkType.ValueString()]; ok {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("interval"), types.Float64Value(rewrittenInterval))...)
 	}
 }

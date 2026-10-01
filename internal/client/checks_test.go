@@ -34,7 +34,7 @@ func TestListChecks(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(checks)
+		_ = json.NewEncoder(w).Encode(checks)
 	}))
 	defer server.Close()
 
@@ -82,7 +82,7 @@ func TestGetCheck(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(check)
+		_ = json.NewEncoder(w).Encode(check)
 	}))
 	defer server.Close()
 
@@ -108,7 +108,7 @@ func TestGetCheck(t *testing.T) {
 func TestGetCheckNotFound(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Check not found"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "Check not found"})
 	}))
 	defer server.Close()
 
@@ -155,7 +155,7 @@ func TestCreateCheck(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(check)
+		_ = json.NewEncoder(w).Encode(check)
 	}))
 	defer server.Close()
 
@@ -194,7 +194,7 @@ func TestUpdateCheck(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(check)
+		_ = json.NewEncoder(w).Encode(check)
 	}))
 	defer server.Close()
 
@@ -224,7 +224,7 @@ func TestDeleteCheck(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(DeleteResponse{OK: true, ID: "201205050153W2Q4C-0J2HSIRF"})
+		_ = json.NewEncoder(w).Encode(DeleteResponse{OK: true, ID: "201205050153W2Q4C-0J2HSIRF"})
 	}))
 	defer server.Close()
 
@@ -249,7 +249,7 @@ func TestDeleteCheckNotFoundReturnsNotFoundError(t *testing.T) {
 			t.Errorf("expected DELETE, got %s", r.Method)
 		}
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Check not found"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "Check not found"})
 	}))
 	defer server.Close()
 
@@ -278,7 +278,7 @@ func TestDeleteCheckNotFoundReturnsNotFoundError(t *testing.T) {
 func TestDeleteCheckOKFalseIsNotAnError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(DeleteResponse{OK: false})
+		_ = json.NewEncoder(w).Encode(DeleteResponse{OK: false})
 	}))
 	defer server.Close()
 
@@ -294,7 +294,7 @@ func TestDeleteCheckOKFalseIsNotAnError(t *testing.T) {
 func TestDeleteCheckServerErrorStillFails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "boom"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "boom"})
 	}))
 	defer server.Close()
 
@@ -321,7 +321,7 @@ func TestGetCheckNotFoundUsesErrorsAs(t *testing.T) {
 	// doRequest wraps its error.
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Check not found"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "Check not found"})
 	}))
 	defer server.Close()
 
@@ -331,5 +331,25 @@ func TestGetCheckNotFoundUsesErrorsAs(t *testing.T) {
 	var nfErr *NotFoundError
 	if !errors.As(err, &nfErr) {
 		t.Fatalf("expected *NotFoundError, got %T (%v)", err, err)
+	}
+}
+
+// NodePing returns "queue": false on every disabled check, where an enabled one
+// carries a queue name. Decoding it as a string made every disabled check
+// unreadable, so disabling a check broke the next refresh.
+func TestGetCheck_DisabledCheckWithBooleanQueueDecodes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"_id":"201205050153W2Q4C-0J2HSIRF","customer_id":"201205050153W2Q4C","label":"Disabled","type":"HTTPADV","enable":"inactive","queue":false,"parameters":{"target":"https://example.com","statuscode":403}}`))
+	}))
+	defer server.Close()
+
+	c := NewClient(ClientConfig{APIToken: "test-token", BaseURL: server.URL})
+	check, err := c.GetCheck(context.Background(), "201205050153W2Q4C-0J2HSIRF")
+	if err != nil {
+		t.Fatalf("should decode a disabled check when queue is a boolean: %v", err)
+	}
+	if check.Enabled != "inactive" {
+		t.Errorf("enable = %q, want inactive", check.Enabled)
 	}
 }

@@ -19,6 +19,7 @@ var (
 	_ resource.Resource                = &SubaccountResource{}
 	_ resource.ResourceWithConfigure   = &SubaccountResource{}
 	_ resource.ResourceWithImportState = &SubaccountResource{}
+	_ resource.ResourceWithModifyPlan  = &SubaccountResource{}
 )
 
 type SubaccountResource struct {
@@ -307,10 +308,10 @@ func (r *SubaccountResource) ImportState(ctx context.Context, req resource.Impor
 
 // applyAccount copies the fields NodePing actually returns onto the model.
 //
-// contactname, email, emailme and autodiagnotifications are deliberately not
-// touched: the API accepts them but never reports them back, so overwriting the
+// contactname, email and autodiagnotifications are deliberately not touched:
+// the API accepts them but never reports them back, so overwriting the
 // configured values from a response would replace them with empty strings and
-// produce permanent drift.
+// produce permanent drift. emailme is returned, as a boolean.
 // adoptRemote selects whether values the practitioner also configures are taken
 // from the response. During a refresh they must be, otherwise drift is invisible.
 // During create and update they must not be: a value NodePing normalises
@@ -334,6 +335,15 @@ func applyAccount(ctx context.Context, model *SubaccountResourceModel, account *
 	} else if isUnset(model.Status) {
 		// NodePing creates every subaccount active.
 		model.Status = types.StringValue("Active")
+	}
+
+	if account.EmailMe != "" && (adoptRemote || isUnset(model.EmailMe)) {
+		model.EmailMe = types.StringValue(account.EmailMe)
+	}
+	// location is never returned. defaultlocations is derived from it, so an
+	// imported subaccount takes it from there when there is exactly one.
+	if isUnset(model.Location) && len(account.DefaultLocations) == 1 {
+		model.Location = types.StringValue(account.DefaultLocations[0])
 	}
 
 	locations, d := types.ListValueFrom(ctx, types.StringType, account.DefaultLocations)
@@ -365,4 +375,30 @@ func nonDefaultString(v types.String, apiDefault string) string {
 		return ""
 	}
 	return value
+}
+
+// ModifyPlan requires the create-only fields when a subaccount is being created.
+// They are Optional in the schema because NodePing never returns them, so an
+// imported subaccount has none, but NodePing cannot create one without them.
+func (r *SubaccountResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || !req.State.Raw.IsNull() {
+		return
+	}
+	var plan SubaccountResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	for _, f := range []struct {
+		name  string
+		value types.String
+	}{{"contactname", plan.ContactName}, {"email", plan.Email}, {"location", plan.Location}} {
+		if f.value.IsNull() {
+			resp.Diagnostics.AddAttributeError(
+				path.Root(f.name),
+				"Missing Attribute For New Subaccount",
+				f.name+" is required to create a subaccount. It may be left unset only on a subaccount that already exists.",
+			)
+		}
+	}
 }

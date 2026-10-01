@@ -94,9 +94,28 @@ func (b ScheduleFlexBool) Bool() bool { return bool(b) }
 // The booleans are always serialised, never omitted: dropping `exclude: 0` from
 // the payload means turning exclusion off never reaches the API and the
 // resource drifts forever.
+// ScheduleTime is an "HH:MM" time. NodePing returns false (and sometimes null)
+// in place of a time on a day with no hours; both decode as empty, and empty is
+// omitted on write.
+type ScheduleTime string
+
+func (t *ScheduleTime) UnmarshalJSON(data []byte) error {
+	switch string(data) {
+	case "null", "false":
+		*t = ""
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return fmt.Errorf("schedule time must be a string, false or null, got %s", data)
+	}
+	*t = ScheduleTime(s)
+	return nil
+}
+
 type ScheduleDay struct {
-	Time1    string           `json:"time1,omitempty"`
-	Time2    string           `json:"time2,omitempty"`
+	Time1    ScheduleTime     `json:"time1,omitempty"`
+	Time2    ScheduleTime     `json:"time2,omitempty"`
 	Exclude  ScheduleFlexBool `json:"exclude"`
 	Disabled ScheduleFlexBool `json:"disabled"`
 	AllDay   ScheduleFlexBool `json:"allday"`
@@ -271,8 +290,8 @@ func validateScheduleData(data map[string]ScheduleDay) error {
 			field string
 			value string
 		}{
-			{"time1", day.Time1},
-			{"time2", day.Time2},
+			{"time1", string(day.Time1)},
+			{"time2", string(day.Time2)},
 		}
 		for _, t := range times {
 			if t.value == "" || scheduleTimePattern.MatchString(t.value) {

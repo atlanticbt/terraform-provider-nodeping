@@ -601,3 +601,198 @@ is a PUT, so the ID is known whether or not the call succeeded, and it is record
 failure once the request has been handed to the client.
 
 **Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-024 — `suppress_diag` accepts only `false`, because NodePing discards it
+
+**Assumption:** `suppress_diag = true` on a `nodeping_contact` address is a configuration
+error. The attribute remains in the schema and `false` is accepted, so existing
+configurations and state are unaffected.
+
+**Why:** NodePing accepts `suppressdiag` in a contact address payload, stores nothing, and
+never returns it. Every sibling flag — `suppressup`, `suppressdown`, `suppressfirst`,
+`suppressall` — round trips. The provider therefore planned `true` and read back `false`,
+and OpenTofu aborted the apply with "Provider produced inconsistent result after apply …
+This is a bug in the provider", which points the practitioner at the provider for a
+limitation of the upstream API.
+
+**Evidence:** `POST /contacts` with `suppressdiag: true` on email, SMS and webhook
+addresses, against the test subaccount. The created document omits the field in all three
+cases while a sibling flag sent in the same request comes back set. `PUT /contacts/:id`
+behaves the same. Reproduced through the provider before the validator existed:
+`TestAccContact_suppressDiagRejected`'s first step failed with `.address[0].suppress_diag:
+was cty.True, but now cty.False`.
+
+**Rejected alternative:** keeping the planned `true` in state. State would then claim a
+suppression that is not in effect, which is worse than refusing the value.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-025 — The contact `addresses` map is sent on every update, and a contact may not lose its last address
+
+**Assumption:** `ContactUpdateRequest.Addresses` carries no `omitempty`. An update that
+keeps no existing address sends `"addresses": {}`; an update to a contact that has no
+addresses and gains none sends `"addresses": null`. Reducing a contact to zero addresses is
+refused by the provider before the request is made.
+
+**Why:** NodePing treats `addresses` as the complete set and deletes anything missing from
+it. With `omitempty`, an update whose planned addresses were all new — replacing a contact's
+only email with an SMS, where nothing matches by content, ID or position — dropped the map
+from the request, so NodePing added the new address and kept the old one. The apply failed
+with "block count changed from 1 to 2" and the contact was left with an address the
+configuration had removed.
+
+The two empty forms are not interchangeable. `{}` is refused with "Account must have at
+least one 'owner' contact" whenever it would leave the contact empty, including on a
+contact that is already empty; `null` is read as "not specified" and leaves the addresses
+alone. So `{}` is sent only when `newaddresses` will repopulate the set.
+
+**Evidence:** probed against the test subaccount. `PUT` with `addresses: {}` and a
+`newaddresses` entry replaces the set; `PUT` with `addresses: {}` alone returns
+`{"error": "Account must have at least one 'owner' contact."}` whether or not the contact
+currently has addresses; `PUT` with `addresses: null` succeeds and preserves them.
+
+**Rejected alternative:** letting the API refuse the zero-address update. The practitioner
+would read a message about account owners, followed by an inconsistent-result error naming
+the provider, for what is simply an operation NodePing does not support.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-026 — A contact with no name is null in state, not an empty string
+
+**Assumption:** `Read` and `ImportState` map an absent or empty NodePing contact name to
+`types.StringNull()`.
+
+**Why:** `name` is Optional and not Computed, so a contact created without one holds null
+in state. NodePing omits the `name` key entirely for such a contact, and writing the
+resulting `""` back made every refresh plan an update from null to `""`. No apply could
+settle it: the create request drops an empty name (`omitempty`), so the API never gains the
+value the plan is asking for.
+
+**Evidence:** `POST /contacts` without `name` returns a document with no `name` key.
+Through the provider, the post-apply refresh plan was non-empty on every run;
+`TestAccContact_withoutName` is the regression test and its `PlanOnly` step is the
+assertion.
+
+**Limitation:** `name = ""` written explicitly is now indistinguishable from an absent name
+and will still diff. NodePing has no way to store an empty name, so there is nothing for the
+provider to make that configuration mean.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+---
+
+## A-027 — An imported contact's address order is not the configuration's
+
+**Assumption:** the acceptance tests verify an imported contact's `address` blocks with
+`ImportStateCheck` against the set of blocks apply wrote, and exclude `address` from
+`ImportStateVerify`.
+
+**Why:** NodePing returns addresses as a map keyed by a server-assigned ID. With no plan to
+follow, `mapAddressesToModel` orders them by that ID, which is random per address, while an
+apply orders them as the configuration does. `ImportStateVerify` compares by list position,
+so it would pass or fail on which IDs NodePing happened to issue — a flaky test rather than
+a real signal. The set comparison asserts the stronger property anyway: every block,
+including its server-assigned ID, comes back from the API unchanged.
+
+**Consequence for practitioners:** the first plan after importing a contact with more than
+one address may show the blocks being reordered. The apply is a no-op at the API — the
+provider matches addresses by content, so no ID moves — and the next plan is empty. Sorting
+cannot fix this; no ordering derivable from the API response can match an arbitrary
+configuration order.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+
+## A-028 — Every shape found by importing the whole estate is accepted
+
+**Assumption:** the provider accepts each value NodePing returned across all 42 accounts on
+2026-09-30, rather than rejecting data it did not expect.
+
+**Why:** importing the whole estate (543 objects) failed on 114 of them, across eight causes,
+all in the provider:
+
+- `queue` is `false` on every disabled check, not a queue name. The field was never used, so
+  it is no longer decoded. Disabling a check had made it unreadable.
+- A schedule day with no hours has `time1`/`time2` of `false`. `ScheduleTime` reads `false`
+  and `null` as empty.
+- `sens = 0` (one live PUSH check) and `statuscode = 0` (two HTTPADV checks) were refused by
+  validators stricter than NodePing.
+- A type-specific value left on a check after its type changed (`contentstring` on three SSL
+  checks) was an error. It is now a warning. A boolean flag turned on for the wrong type is
+  still an error, since no live check has one.
+- `custrole = "owner"` was refused.
+- Owner and login contact addresses have no `type`, and `GET /contacts/:id` returns a login
+  contact's addresses as an array keyed by nothing. `type` is Optional, read as null when
+  absent, and still required on a new address; the array form is keyed by the address
+  itself, as `GET /contacts` keys it.
+- A webhook query-string value can be a JSON object. `FlexStringMap` keeps it as JSON text
+  and sends text that parses as an object or array back as JSON, so an update does not turn
+  the object into a string. A literal string that happens to be a JSON object would be sent
+  as an object; no live value is like that.
+- `nodeping_subaccount` required `contactname`, `email` and `location`, which NodePing never
+  returns, so no subaccount could be imported. They are Optional, `ModifyPlan` requires them
+  when a subaccount is created, `location` is taken from `default_locations` on import, and
+  `emailme` is read from the API, which returns it as a boolean.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-029 — An untagged check plans null tags_all, not an empty set
+
+**Assumption:** when the configuration and provider defaults give a check no tags and state
+already holds none (null), `tags_all` is planned null.
+
+**Why:** NodePing omits the `tags` key on a check that never had one, which Read stores as
+null, and planning `[]` against that was an in-place update on 31 of 35 checks in the first
+estate import. `[]` is still planned when state holds tags, because that is what tells
+NodePing to clear them.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-030 — Integer zeros are sent to NodePing as strings
+
+**Assumption:** `sens`, `statuscode`, `warningdays`, `volumemin` and `port` are sent as the
+string `"0"` when their value is zero, and as JSON numbers otherwise.
+
+**Why:** NodePing treats a JSON number `0` as empty. Creating a check with `sens: 0` fails with
+"Unable to create check", and `statuscode: 0` or `warningdays: 0` is stored as `""`, so the
+value never settles. The string `"0"` is stored as zero. Found by the 2026-09-30 acceptance
+tests and confirmed with direct API calls against the test subaccount.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-031 — WHOIS and RDAP intervals follow NodePing's minimums
+
+**Assumption:** an unset `interval` plans `1440` for `WHOIS` and `RDAP` checks, and an explicit
+interval below `240` (WHOIS) or `60` (RDAP) is rejected at plan time.
+
+**Why:** NodePing replaces a shorter interval on these types with `1440` on both create and
+update, so the provider's default of `15` drifted on every plan.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-032 — SPEC10DNS is not a DNS type for attribute rules
+
+**Assumption:** `dnstype`, `dnstoresolve`, `dnssection` and `dnsrd` are treated as not
+applicable to `SPEC10DNS` checks.
+
+**Why:** NodePing keeps none of them on a SPEC10DNS check, so a configured value never came
+back and always planned a change.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+
+## A-033 — contactname and email cannot be changed on an existing subaccount
+
+**Assumption:** changing `contactname` or `email` on a subaccount that already has a value is
+a plan-time error; on an imported subaccount with no value, the configured value is recorded
+without an API call.
+
+**Why:** NodePing neither returns nor updates these fields. The earlier behaviour forced a
+replacement, and replacing a subaccount deletes every check and contact in it, which is never
+an acceptable way to rename a contact. Supersedes the `requiresReplaceIfWasSet` design.
+
+**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30

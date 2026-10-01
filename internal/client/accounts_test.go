@@ -759,3 +759,23 @@ func TestAccountRequestsHonorContextCancellation(t *testing.T) {
 		t.Error("expected DeleteAccount to fail on a cancelled context")
 	}
 }
+
+// NodePing returns emailme as a boolean although it is written as "yes"/"no".
+func TestAccountUnmarshal_ReadsEmailMeInEveryForm(t *testing.T) {
+	for body, want := range map[string]string{
+		`{"_id":"A","emailme":false}`: "no",
+		`{"_id":"A","emailme":true}`:  "yes",
+		`{"_id":"A","emailme":"yes"}`: "yes",
+		`{"_id":"A","emailme":"no"}`:  "no",
+		`{"_id":"A"}`:                 "",
+		`{"_id":"A","emailme":7}`:     "",
+	} {
+		var a Account
+		if err := json.Unmarshal([]byte(body), &a); err != nil {
+			t.Fatalf("%s: %v", body, err)
+		}
+		if a.EmailMe != want {
+			t.Errorf("%s: emailme = %q, want %q", body, a.EmailMe, want)
+		}
+	}
+}

@@ -129,7 +129,7 @@ func TestRead(t *testing.T) {
 
 	d := newTestDataSource(t, func(w http.ResponseWriter, req *http.Request) {
 		body, _ := json.Marshal(sampleContacts())
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 
 	resp, _ := readState(t, ctx, d)
@@ -151,7 +151,7 @@ func TestReadError(t *testing.T) {
 
 	d := newTestDataSource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"boom"}`))
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	})
 
 	resp, _ := readState(t, ctx, d)
