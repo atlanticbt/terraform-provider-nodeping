@@ -23,7 +23,7 @@ func TestRead_ShouldFillLocationAndEmailMeWhenImported(t *testing.T) {
 			"creation_date": 1522264837864, "status": "Active", "timezone": "-5.0",
 			"defaultlocations": []string{"eur"}, "emailme": true,
 		})
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 
 	prior := SubaccountResourceModel{ID: types.StringValue(accountID)}

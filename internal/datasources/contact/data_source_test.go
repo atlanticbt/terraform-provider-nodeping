@@ -122,7 +122,7 @@ func TestDataSourceRead(t *testing.T) {
 				"A1": {Type: "email", Address: "a@example.com"},
 			},
 		})
-		w.Write(body)
+		_, _ = w.Write(body)
 	})
 
 	config := testConfig(t, ctx, ContactDataSourceModel{ID: types.StringValue("C1")})
@@ -150,7 +150,7 @@ func TestDataSourceReadError(t *testing.T) {
 
 	d := newTestDataSource(t, func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte(`{"error":"boom"}`))
+		_, _ = w.Write([]byte(`{"error":"boom"}`))
 	})
 
 	config := testConfig(t, ctx, ContactDataSourceModel{ID: types.StringValue("C1")})

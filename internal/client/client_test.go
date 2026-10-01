@@ -76,7 +76,7 @@ func TestDoRequestBasicAuth(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUser, gotPass, gotOK = r.BasicAuth()
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	defer server.Close()
 
@@ -112,7 +112,7 @@ func TestDoRequestCustomerID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedCustomerID = r.URL.Query().Get("customerid")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	defer server.Close()
 
@@ -144,11 +144,11 @@ func TestDoRequestRetry(t *testing.T) {
 		attempts++
 		if attempts < 3 {
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(ErrorResponse{Error: "temporary error"})
+			_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "temporary error"})
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 	defer server.Close()
 
@@ -181,7 +181,7 @@ func TestDoRequestNoRetryOn400(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "bad request"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "bad request"})
 	}))
 	defer server.Close()
 

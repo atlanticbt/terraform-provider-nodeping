@@ -35,7 +35,7 @@ func testConfig(t *testing.T, ctx context.Context, model MaintenanceDataSourceMo
 	if diags := state.Set(ctx, &model); diags.HasError() {
 		t.Fatalf("config diagnostics: %v", diags)
 	}
-	return tfsdk.Config{Schema: state.Schema, Raw: state.Raw}
+	return tfsdk.Config(state)
 }
 
 func newTestDataSource(t *testing.T, handler http.HandlerFunc) *MaintenanceDataSource {

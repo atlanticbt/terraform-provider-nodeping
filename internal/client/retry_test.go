@@ -74,7 +74,7 @@ func TestCreateCheckNotRetriedOn500(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&posts, 1)
 		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "boom"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "boom"})
 	}))
 	defer server.Close()
 
@@ -235,7 +235,7 @@ func TestUnmarshalErrorNotRetried(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&attempts, 1)
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{"_id": "abc", "label":`) // truncated JSON
+		_, _ = io.WriteString(w, `{"_id": "abc", "label":`) // truncated JSON
 	}))
 	defer server.Close()
 
@@ -261,7 +261,7 @@ func TestRateLimitErrorCarriesRetryAfterSeconds(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", "7")
 		w.WriteHeader(http.StatusTooManyRequests)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "slow down"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "slow down"})
 	}))
 	defer server.Close()
 
@@ -364,7 +364,7 @@ func TestRetryAfterIsHonoredBetweenAttempts(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{"status":"ok"}`)
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	}))
 	defer server.Close()
 
@@ -401,7 +401,7 @@ func TestRetriesConsumeRateLimiterTokens(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{"status":"ok"}`)
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	}))
 	defer server.Close()
 
@@ -431,7 +431,7 @@ func TestRetriesConsumeRateLimiterTokens(t *testing.T) {
 func TestRateLimiterPacesSequentialRequests(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{"status":"ok"}`)
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	}))
 	defer server.Close()
 
@@ -460,12 +460,12 @@ func TestResponseBodyIsSizeCapped(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{"label":"`)
+		_, _ = io.WriteString(w, `{"label":"`)
 		chunk := strings.Repeat("A", 64*1024)
 		for i := 0; i < 40; i++ { // ~2.5 MiB, above the 1 MiB cap
-			io.WriteString(w, chunk)
+			_, _ = io.WriteString(w, chunk)
 		}
-		io.WriteString(w, `"}`)
+		_, _ = io.WriteString(w, `"}`)
 	}))
 	defer server.Close()
 
@@ -482,7 +482,7 @@ func TestResponseBodyIsSizeCapped(t *testing.T) {
 func TestErrorMessageTruncated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, strings.Repeat("x", 10000)) // not JSON
+		_, _ = io.WriteString(w, strings.Repeat("x", 10000)) // not JSON
 	}))
 	defer server.Close()
 
@@ -624,7 +624,7 @@ func TestEmptyIDRejected(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&reached, 1)
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{}`)
+		_, _ = io.WriteString(w, `{}`)
 	}))
 	defer server.Close()
 
@@ -823,7 +823,7 @@ func TestBasicAuthTokenPlacement(t *testing.T) {
 		authHeader = r.Header.Get("Authorization")
 		rawURL = r.URL.String()
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, `{"status":"ok"}`)
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	}))
 	defer server.Close()
 
@@ -1008,7 +1008,7 @@ func TestUnmarshalableRequestBodyReported(t *testing.T) {
 func TestListChecksErrorPropagates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "bad token"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "bad token"})
 	}))
 	defer server.Close()
 
@@ -1025,7 +1025,7 @@ func TestListChecksErrorPropagates(t *testing.T) {
 func TestUpdateErrorPropagates(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "nope"})
+		_ = json.NewEncoder(w).Encode(ErrorResponse{Error: "nope"})
 	}))
 	defer server.Close()
 

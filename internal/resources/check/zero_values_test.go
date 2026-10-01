@@ -32,7 +32,9 @@ func TestBuildCreateRequest_ShouldSendZeroNumbersAsStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]interface{}
-	json.Unmarshal(body, &got)
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 	for _, k := range []string{"sens", "statuscode", "warningdays", "volumemin", "port"} {
 		if got[k] != "0" {
 			t.Errorf("%s = %#v, want the string \"0\"", k, got[k])
@@ -54,7 +56,9 @@ func TestBuildCreateRequest_ShouldSendNonZeroNumbersAsNumbers(t *testing.T) {
 	req := (&CheckResource{}).buildCreateRequest(ctx, &plan, types.StringNull(), nil, &diags)
 	body, _ := json.Marshal(req)
 	var got map[string]interface{}
-	json.Unmarshal(body, &got)
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 	want := map[string]float64{"sens": 2, "statuscode": 403, "warningdays": 14, "volumemin": -45, "port": 443}
 	for k, v := range want {
 		if got[k] != v {

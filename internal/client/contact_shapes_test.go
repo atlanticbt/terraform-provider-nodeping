@@ -17,7 +17,7 @@ import (
 // same address by the address itself.
 func TestGetContact_LoginContactWithAddressArrayDecodes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"_id":"201205050153W2Q4C-X9MA3","type":"contact","customer_id":"201205050153W2Q4C","name":"Login","custrole":"edit","addresses":[{"address":"login@example.com","status":"new"}]}`))
+		_, _ = w.Write([]byte(`{"_id":"201205050153W2Q4C-X9MA3","type":"contact","customer_id":"201205050153W2Q4C","name":"Login","custrole":"edit","addresses":[{"address":"login@example.com","status":"new"}]}`))
 	}))
 	defer server.Close()
 
@@ -72,8 +72,12 @@ func TestFlexStringMap_ObjectValueRoundTrips(t *testing.T) {
 		t.Fatal(err)
 	}
 	var want, got interface{}
-	json.Unmarshal([]byte(in), &want)
-	json.Unmarshal(out, &got)
+	if err := json.Unmarshal([]byte(in), &want); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 	wb, _ := json.Marshal(want)
 	gb, _ := json.Marshal(got)
 	if string(wb) != string(gb) {
@@ -87,7 +91,9 @@ func TestFlexStringMap_PlainStringsStayStrings(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]interface{}
-	json.Unmarshal(out, &got)
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
 	for k, v := range got {
 		if _, isString := v.(string); !isString {
 			t.Errorf("%s encoded as %T, want string", k, v)
