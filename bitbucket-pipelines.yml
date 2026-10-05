@@ -38,7 +38,8 @@ definitions:
         name: Vulnerability Scan
         caches: [gomod]
         script:
-          - go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+          # Pinned: @latest moves to versions that need a newer Go than the image has.
+          - go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
     - step: &secret-scan
         name: Secret Scan
@@ -59,7 +60,8 @@ definitions:
         name: Package Release Archives
         caches: [gomod]
         script:
-          - go install github.com/goreleaser/goreleaser/v2@latest
+          # Pinned to the newest release that supports Go 1.26; v2.18 needs 1.27.
+          - go install github.com/goreleaser/goreleaser/v2@v2.17.1
           - goreleaser release --clean --skip=publish
           - ls -la dist/*.zip
         artifacts:
