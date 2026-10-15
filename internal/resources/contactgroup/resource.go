@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
 	"sort"
 	"strings"
 
@@ -102,7 +103,7 @@ func (r *ContactGroupResource) Create(ctx context.Context, req resource.CreateRe
 		"id": group.ID,
 	})
 
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -140,7 +141,7 @@ func (r *ContactGroupResource) Read(ctx context.Context, req resource.ReadReques
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -195,7 +196,7 @@ func (r *ContactGroupResource) Update(ctx context.Context, req resource.UpdateRe
 	// re-states the same values -- but on a resource created before the core
 	// supported identity there is no stored identity yet, and the framework
 	// rejects an update that leaves it null.
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -230,28 +231,13 @@ func (r *ContactGroupResource) Delete(ctx context.Context, req resource.DeleteRe
 }
 
 func (r *ContactGroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	var groupID string
-	var customerID string
-
 	// An "identity" import block is handled first; anything else is the
 	// established string form, which must keep working unchanged.
-	if idFromIdentity, customerFromIdentity, fromIdentity := identityImportValues(ctx, req, &resp.Diagnostics); fromIdentity {
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if idFromIdentity == "" {
-			resp.Diagnostics.AddError(
-				"Invalid Import Identity",
-				"The 'id' attribute of the import identity must be a non-empty contact group ID.",
-			)
-			return
-		}
-		groupID = idFromIdentity
-		customerID = customerFromIdentity
-	} else {
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	groupID, customerID, fromIdentity := identity.FromImport(ctx, req, &resp.Diagnostics, "contact group")
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !fromIdentity {
 
 		var ok bool
 		groupID, customerID, ok = parseImportID(req.ID)
@@ -293,7 +279,7 @@ func (r *ContactGroupResource) ImportState(ctx context.Context, req resource.Imp
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
