@@ -203,7 +203,7 @@ func TestResponseBody_ShouldParseLargeListsUnderTheCap(t *testing.T) {
 func TestTruncateMessage_ShouldNotSplitAMultiByteCharacter(t *testing.T) {
 	// "é" is two bytes; placing it across the 512-byte limit would split it.
 	msg := strings.Repeat("a", 511) + "é" + strings.Repeat("b", 100)
-	got := truncateMessage(msg, 512)
+	got := truncateMessage(msg)
 	if !utf8.ValidString(got) {
 		t.Fatalf("truncated message is not valid UTF-8: %q", got[505:])
 	}

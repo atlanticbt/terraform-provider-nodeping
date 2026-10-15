@@ -2,6 +2,7 @@ package schedule_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,7 +30,7 @@ func testAccAPI(method, path string, body interface{}) ([]byte, error) {
 		}
 		rdr = bytes.NewReader(b)
 	}
-	req, err := http.NewRequest(method, base+path, rdr)
+	req, err := http.NewRequestWithContext(context.Background(), method, base+path, rdr)
 	if err != nil {
 		return nil, err
 	}

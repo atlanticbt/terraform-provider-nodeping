@@ -4,6 +4,43 @@ All notable changes to this provider are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+First public release from `github.com/atlanticbt/terraform-provider-nodeping`, published
+to the OpenTofu registry as `atlanticbt/nodeping`.
+
+### Breaking changes
+
+- The provider no longer reads the API token from `NODEPING_API_KEY`. Set `api_token`
+  or `NODEPING_API_TOKEN`. The fallback was never documented, and a credential source
+  users do not know about can pick up a more privileged token than intended.
+
+### Security
+
+- Built with Go 1.26.9 and `golang.org/x/net` v0.60.0, which fix nine vulnerabilities
+  reachable from the provider's HTTP client (GO-2026-6603 to GO-2026-6617).
+
+### Fixed
+
+- `max_retries = 0`, `retry_wait_min = 0` and `retry_wait_max = 0` are honoured instead
+  of being replaced by the defaults.
+- Responses over 16 MiB fail with a clear error naming the endpoint, instead of a
+  truncated-JSON error; the limit was 1 MiB.
+- API error messages are no longer cut in the middle of a multi-byte character.
+
+### Added
+
+- Length limits on check `label`, `target`, `contentstring` and `postdata`, and contact
+  `name`, `address` and `data`, checked at plan time. NodePing enforces none, so the
+  limits are the provider's own, set well above values seen in practice.
+- GitHub Actions CI (format, vet, golangci-lint with security linters, race tests,
+  govulncheck, gitleaks), signed releases, and a weekly live acceptance run.
+
+### Changed
+
+- Resource identity and create-recovery logic is shared in one package, and the check
+  resource is split into files by concern. No behaviour change.
+
 ## [1.1.0] - 2026-10-05
 
 Verified against the live NodePing API. Every resource now has acceptance tests, and the

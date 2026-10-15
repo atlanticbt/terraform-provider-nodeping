@@ -159,7 +159,7 @@ func TestPostRetriedOnlyWhenServerProvablyNeverActed(t *testing.T) {
 			}
 
 			got := atomic.LoadInt32(&attempts)
-			if tt.wantRetries && got != int32(c.maxRetries+1) {
+			if tt.wantRetries && int(got) != c.maxRetries+1 {
 				t.Errorf("expected POST to be retried %d times, got %d attempts", c.maxRetries+1, got)
 			}
 			if !tt.wantRetries && got != 1 {
@@ -197,7 +197,7 @@ func TestNetworkFailuresRetriedForIdempotentMethods(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error")
 			}
-			if got := atomic.LoadInt32(&attempts); got != int32(c.maxRetries+1) {
+			if got := atomic.LoadInt32(&attempts); int(got) != c.maxRetries+1 {
 				t.Errorf("expected %d attempts, got %d", c.maxRetries+1, got)
 			}
 		})
@@ -403,11 +403,11 @@ func TestErrorMessageTruncated(t *testing.T) {
 }
 
 func TestTruncateMessage(t *testing.T) {
-	if got := truncateMessage("  short  ", 512); got != "short" {
+	if got := truncateMessage("  short  "); got != "short" {
 		t.Errorf("expected trimmed short message, got %q", got)
 	}
 	long := strings.Repeat("y", 600)
-	got := truncateMessage(long, 512)
+	got := truncateMessage(long)
 	if len(got) != 512+len("... (truncated)") {
 		t.Errorf("unexpected truncated length %d", len(got))
 	}

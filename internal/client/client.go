@@ -474,13 +474,13 @@ func errorMessageFromBody(body []byte) (string, bool) {
 	if errResp.Error == "" {
 		return "", false
 	}
-	return truncateMessage(errResp.Error, maxErrorMessageLength), true
+	return truncateMessage(errResp.Error), true
 }
 
 func (c *Client) handleErrorResponse(statusCode int, header http.Header, body []byte) error {
 	message, ok := errorMessageFromBody(body)
 	if !ok {
-		message = truncateMessage(string(body), maxErrorMessageLength)
+		message = truncateMessage(string(body))
 	}
 
 	if statusCode == http.StatusTooManyRequests {
@@ -501,7 +501,8 @@ func (c *Client) handleErrorResponse(statusCode int, header http.Header, body []
 	}
 }
 
-func truncateMessage(s string, limit int) string {
+func truncateMessage(s string) string {
+	const limit = maxErrorMessageLength
 	s = strings.TrimSpace(s)
 	if len(s) <= limit {
 		return s
@@ -561,7 +562,7 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 
 	// Jitter is applied first, then the cap, so the returned delay can never
 	// exceed retryMaxWait.
-	backoff += rand.Float64() * 0.3 * backoff
+	backoff += rand.Float64() * 0.3 * backoff //nolint:gosec // backoff jitter, not a security value
 
 	if backoff > float64(c.retryMaxWait) {
 		backoff = float64(c.retryMaxWait)

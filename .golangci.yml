@@ -1,0 +1,46 @@
+# golangci-lint v1.62 configuration. CI pins the same version.
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    # defaults, listed so the set is explicit
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    # security and correctness
+    - gosec
+    - errorlint
+    - bodyclose
+    - noctx
+    - unparam
+    - misspell
+    # complexity, at thresholds that stop regressions without forcing rewrites
+    - gocyclo
+    - nestif
+
+linters-settings:
+  gocyclo:
+    min-complexity: 30
+  nestif:
+    min-complexity: 8
+  # No locale: the codebase is written in British English, and without a
+  # locale misspell accepts both spellings and flags only genuine typos.
+  gosec:
+    excludes:
+      # G101 flags attribute names such as "password" and "api_token" in
+      # schema definitions, which are names, not credentials.
+      - G101
+
+issues:
+  exclude-rules:
+    # Test helpers routinely take a parameter that every current caller passes
+    # the same value for; that is not a defect in test code.
+    - path: _test\.go
+      linters:
+        - unparam
+  max-issues-per-linter: 0
+  max-same-issues: 0
