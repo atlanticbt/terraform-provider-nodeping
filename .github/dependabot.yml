@@ -4,6 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Wait a week before proposing a new version, so a compromised release is
+    # more likely to be found and pulled first.
+    cooldown:
+      default-days: 7
     groups:
       go-minor-and-patch:
         update-types: [minor, patch]
@@ -11,6 +15,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # Wait a week before proposing a new version, so a compromised release is
+    # more likely to be found and pulled first.
+    cooldown:
+      default-days: 7
     groups:
       actions-minor-and-patch:
         update-types: [minor, patch]

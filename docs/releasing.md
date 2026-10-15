@@ -62,7 +62,9 @@ registered for the `atlanticbt` namespace.
    gpg --armor --export <KEY_ID> > release-key.pub
    ```
 
-5. In GitHub, go to **Settings > Secrets and variables > Actions**. Add these secrets:
+5. In GitHub, go to **Settings > Environments > release**. Add these environment secrets.
+   Do not add them as repository secrets: every workflow run can read a repository
+   secret, and only `v*` tags can deploy to the `release` environment.
 
    | Secret | Value |
    |---|---|
@@ -87,8 +89,8 @@ pass.
 | Job | What it does |
 |---|---|
 | `verify-tag` | Stops the release if the tagged commit is not on `main`. |
-| `ci` | Runs the full CI suite on the tagged commit: `fmt-vet`, `lint`, `test`, `vulncheck` and `secret-scan`. |
-| `release` | Builds the six platform archives with GoReleaser. Signs `SHA256SUMS`. Publishes a GitHub release. |
+| `ci` | Runs the full CI suite on the tagged commit. See [CI status checks](#ci-status-checks). |
+| `release` | Builds the six platform archives with GoReleaser. Signs `SHA256SUMS`. Publishes a GitHub release. Runs in the `release` environment, which holds the signing secrets. It does not restore a Go build cache. |
 
 ### Procedure
 
@@ -148,13 +150,34 @@ forms in the `opentofu/registry` repository. Do not use pull requests or the API
 2. Add the same public key to the signing keys of the `atlanticbt` namespace.
 3. Publish the repository.
 
+## Repository settings
+
+These settings work on a private repository on GitHub Free. They were applied on
+2026-10-15. Check them again after any change to the organization's plan.
+
+| Setting | Value |
+|---|---|
+| **Actions > General > Actions permissions** | Allow GitHub-owned actions and these patterns: `crazy-max/ghaction-import-gpg@*`, `goreleaser/goreleaser-action@*`, `opentofu/setup-opentofu@*`. Require actions to be pinned to a full-length commit SHA. |
+| **Actions > General > Workflow permissions** | Read-only. Actions cannot approve pull requests. |
+| **Environments > `release`** | Deployment tags: `v*` only. Holds `GPG_PRIVATE_KEY` and `PASSPHRASE`. |
+| **Environments > `acceptance`** | Deployment branches: `main` only. Holds the NodePing test-account secrets. See [Scheduled acceptance tests](#scheduled-acceptance-tests). |
+| **Code security** | Dependabot alerts and Dependabot security updates on. |
+| **General** | Wiki and Projects off. Head branches are deleted after merge. |
+
+To add an action from a new owner, add its pattern to the allowed list first. If you do
+not, every workflow that uses it fails at startup.
+
 ## Make the repository public
 
 The organization uses GitHub Free. Branch rulesets and secret scanning are not available for
 a private repository on this plan. They become available when the repository is public.
 
 > **SECURITY:** When you make the repository public, all of its history becomes public.
-> Before step 1, make sure that the history contains only the cleaned initial commit.
+> Before step 1, scan the full history:
+> `go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact .`
+> The only accepted finding is the one in `.gitleaksignore`. Then delete and recreate the
+> GitHub repository and push again, or ask GitHub Support to purge unreachable commits.
+> After a force-push, GitHub keeps old commits reachable by their hash.
 
 > **SECURITY:** Until you complete step 2, anyone with write access can push to `main`.
 > Do all steps in one session.
@@ -168,7 +191,7 @@ a private repository on this plan. They become available when the repository is 
    - Require review from Code Owners.
    - Dismiss stale approvals when new commits are pushed.
    - Require these status checks to pass: `fmt-vet`, `lint`, `test`, `vulncheck`,
-     `secret-scan`.
+     `secret-scan`, `trivy`, `workflow-audit`.
    - Require the branch to be up to date before merging.
    - Keep the bypass list empty.
 3. Go to **Settings > Rules > Rulesets > New tag ruleset**. Target `v*`. Set these rules:
@@ -180,11 +203,17 @@ a private repository on this plan. They become available when the repository is 
 4. Go to **Settings > Code security**. Enable these features:
    - Secret scanning
    - Push protection
-   - Dependabot alerts
-   - Dependabot security updates
    - Private vulnerability reporting. `SECURITY.md` tells reporters to use it.
-5. Go to **Settings > Actions > General**. Set the default workflow permissions to
-   read-only.
+5. Add the checks that GitHub Free does not offer on a private repository:
+   - **CodeQL** for Go: **Settings > Code security > Code scanning > Set up > Default**.
+   - **Dependency review** on pull requests: a `pull_request` job with
+     `actions/dependency-review-action`, pinned to a commit SHA, set to fail on HIGH.
+     Add `dependency-review` to the required status checks in step 2.
+   - **OpenSSF Scorecard**: `ossf/scorecard-action`, pinned to a commit SHA, on a weekly
+     schedule. Add `ossf/scorecard-action@*` to the allowed actions first.
+   - **Build provenance and SBOM** for releases: `actions/attest-build-provenance` in the
+     release job, and an `sboms` section in `.goreleaser.yml`. The release job then needs
+     `id-token: write` and `attestations: write`.
 6. Make sure that the team `@atlanticbt/nodeping-maintainers` exists and has write access.
    If it does not, `CODEOWNERS` cannot find the code owners.
 
@@ -195,11 +224,18 @@ release workflow also runs it. The job names are the required status checks.
 
 | Check | What it runs |
 |---|---|
-| `fmt-vet` | `gofmt -l` and `go vet` |
+| `fmt-vet` | `gofmt -l`, `go vet`, `go mod tidy -diff`, `go mod verify`, and `tofu fmt -check` on `examples/` |
 | `lint` | golangci-lint v2.14.0 |
-| `test` | Unit tests with the race detector and coverage |
+| `test` | Unit tests with the race detector, in random order (`-shuffle=on`). Fails when statement coverage is below 90%. See A-034 in [assumptions.md](assumptions.md). |
 | `vulncheck` | govulncheck v1.8.0 |
 | `secret-scan` | gitleaks v8.30.1 on the commits that the change adds |
+| `trivy` | Trivy v0.75.0 on the working tree: HIGH and CRITICAL vulnerabilities, secrets and misconfigurations |
+| `workflow-audit` | zizmor v1.30.1 on `.github/workflows`: template injection, secrets that reach untrusted code, cache poisoning, unpinned actions |
+
+The `trivy` and `workflow-audit` jobs download a release binary and check its SHA-256
+against a hash in `ci.yml`. To update either tool, verify the new release first (the
+cosign signature of Trivy's checksums file, or `gh attestation verify` for zizmor). Then
+change the version and the hash together.
 
 ## Scheduled acceptance tests
 

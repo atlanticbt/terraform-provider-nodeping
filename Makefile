@@ -14,7 +14,7 @@ build:
 	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) .
 
 test:
-	go test ./... -race -cover
+	go test ./... -race -shuffle=on -cover
 
 cover:
 	go test ./... -race -coverprofile=coverage.out -covermode=atomic
