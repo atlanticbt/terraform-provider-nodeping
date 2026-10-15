@@ -415,12 +415,12 @@ Report a vulnerability privately. Do not open a public issue.
 
 ## Attribution
 
-Atlantic BT develops this provider, and Doug Eubanks
+[Atlantic BT](https://www.atlanticbt.com) develops this provider, and Doug Eubanks
 ([@RealDougEubanks](https://github.com/RealDougEubanks)) maintains it.
 
 Phillip Schleicher wrote the original provider as
 [phizzl/terraform-provider-nodeping](https://github.com/phizzl/terraform-provider-nodeping).
-His work includes the plugin-framework layout, the NodePing API client, and the check and
+The original work includes the plugin-framework layout, the NodePing API client, and the check and
 contact resources. This repository continues from that work, with the same license.
 
 ## License
