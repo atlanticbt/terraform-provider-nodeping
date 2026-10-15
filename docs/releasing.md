@@ -173,7 +173,11 @@ The organization uses GitHub Free. Branch rulesets and secret scanning are not a
 a private repository on this plan. They become available when the repository is public.
 
 > **SECURITY:** When you make the repository public, all of its history becomes public.
-> Before step 1, make sure that the history contains only the cleaned initial commit.
+> Before step 1, scan the full history:
+> `go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact .`
+> The only accepted finding is the one in `.gitleaksignore`. Then delete and recreate the
+> GitHub repository and push again, or ask GitHub Support to purge unreachable commits.
+> After a force-push, GitHub keeps old commits reachable by their hash.
 
 > **SECURITY:** Until you complete step 2, anyone with write access can push to `main`.
 > Do all steps in one session.
@@ -200,7 +204,17 @@ a private repository on this plan. They become available when the repository is 
    - Secret scanning
    - Push protection
    - Private vulnerability reporting. `SECURITY.md` tells reporters to use it.
-5. Make sure that the team `@atlanticbt/nodeping-maintainers` exists and has write access.
+5. Add the checks that GitHub Free does not offer on a private repository:
+   - **CodeQL** for Go: **Settings > Code security > Code scanning > Set up > Default**.
+   - **Dependency review** on pull requests: a `pull_request` job with
+     `actions/dependency-review-action`, pinned to a commit SHA, set to fail on HIGH.
+     Add `dependency-review` to the required status checks in step 2.
+   - **OpenSSF Scorecard**: `ossf/scorecard-action`, pinned to a commit SHA, on a weekly
+     schedule. Add `ossf/scorecard-action@*` to the allowed actions first.
+   - **Build provenance and SBOM** for releases: `actions/attest-build-provenance` in the
+     release job, and an `sboms` section in `.goreleaser.yml`. The release job then needs
+     `id-token: write` and `attestations: write`.
+6. Make sure that the team `@atlanticbt/nodeping-maintainers` exists and has write access.
    If it does not, `CODEOWNERS` cannot find the code owners.
 
 ## CI status checks
@@ -210,9 +224,9 @@ release workflow also runs it. The job names are the required status checks.
 
 | Check | What it runs |
 |---|---|
-| `fmt-vet` | `gofmt -l` and `go vet` |
+| `fmt-vet` | `gofmt -l`, `go vet`, `go mod tidy -diff`, `go mod verify`, and `tofu fmt -check` on `examples/` |
 | `lint` | golangci-lint v2.14.0 |
-| `test` | Unit tests with the race detector and coverage |
+| `test` | Unit tests with the race detector, in random order (`-shuffle=on`). Fails when statement coverage is below 90%. See A-034 in [assumptions.md](assumptions.md). |
 | `vulncheck` | govulncheck v1.8.0 |
 | `secret-scan` | gitleaks v8.30.1 on the commits that the change adds |
 | `trivy` | Trivy v0.75.0 on the working tree: HIGH and CRITICAL vulnerabilities, secrets and misconfigurations |

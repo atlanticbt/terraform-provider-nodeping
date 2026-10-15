@@ -35,6 +35,17 @@ jobs:
           fi
       - name: go vet
         run: go vet ./...
+      - name: go mod tidy and verify
+        run: |
+          go mod tidy -diff
+          go mod verify
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      # Users copy the examples, so they must be in canonical format.
+      - name: tofu fmt
+        run: tofu fmt -check -diff -recursive examples
 
   lint:
     name: lint
@@ -62,10 +73,23 @@ jobs:
       # Unit tests only. Acceptance tests need a live NodePing account; they run
       # weekly from acceptance.yml, which reads its secrets from a protected
       # environment that pull requests cannot reach.
+      # -shuffle=on randomizes test order, so a test that depends on another
+      # test's side effects fails here instead of passing by luck.
       - name: go test
+        run: go test ./... -race -shuffle=on -coverprofile=coverage.out -covermode=atomic
+      # The ABT floor is 80%. The gate is 90% so that coverage cannot drop far
+      # below the current level (about 95%) unnoticed. Go measures statements
+      # only; see A-034 in docs/assumptions.md.
+      - name: coverage gate
+        env:
+          MIN_COVERAGE: "90"
         run: |
-          go test ./... -race -coverprofile=coverage.out -covermode=atomic
-          go tool cover -func=coverage.out | tail -1
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ {sub(/%/, "", $NF); print $NF}')"
+          echo "Total statement coverage: ${total}% (minimum ${MIN_COVERAGE}%)"
+          if ! awk -v t="$total" -v m="$MIN_COVERAGE" 'BEGIN { exit !(t + 0 >= m + 0) }'; then
+            echo "::error::Coverage ${total}% is below ${MIN_COVERAGE}%"
+            exit 1
+          fi
 
   vulncheck:
     name: vulncheck

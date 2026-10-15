@@ -1,0 +1,5 @@
+# Reviewed false positives. Each line ignores one finding, not the rule.
+#
+# The curl --user argument is the variable reference "${NODEPING_API_TOKEN}:",
+# not a token. Reviewed 2026-10-15.
+9dfaae1ec84f2efdb3bbd91da98e4fad864dc5eb:scripts/nodeping-adhoc-maintenance.sh:curl-auth-user:133

@@ -961,3 +961,16 @@ never an acceptable method to change a contact name. This entry replaces the
 `requiresReplaceIfWasSet` design in A-005.
 
 **Recorded by:** Atlantic BT · **Date:** 2026-09-30
+
+## A-034: CI enforces statement coverage only
+
+**Assumption:** CI fails when total statement coverage is below 90%. It does not measure
+branch, function or line coverage.
+
+**Why:** Go's coverage tool reports statements only. The ABT floors for branches (75%),
+functions (80%) and lines (80%) have no standard Go measurement, and a third-party tool
+for them would add a dependency to CI. The gate is 90%, above the ABT 80% floor, because
+coverage was 95.3% when the gate was added. A lower gate would let it fall a long way
+without a failure.
+
+**Recorded by:** Atlantic BT · **Date:** 2026-10-15
