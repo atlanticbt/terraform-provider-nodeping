@@ -89,13 +89,13 @@ resource "nodeping_check" "with_notifications" {
   sens      = 1
 
   notifications {
-    contact_id = nodeping_contact.basic.id
+    contact_id = nodeping_contact.basic.address[0].id
     delay      = 0
     schedule   = "All"
   }
 
   notifications {
-    contact_id = nodeping_contact.webhook.id
+    contact_id = nodeping_contact.webhook.address[0].id
     delay      = 5
     schedule   = "All"
   }

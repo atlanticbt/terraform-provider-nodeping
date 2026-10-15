@@ -2,12 +2,18 @@
 page_title: "nodeping_notificationprofile Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches a NodePing notification profile by ID.
+  Reads one NodePing notification profile by ID.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_notificationprofile (Data Source)
 
-Fetches a NodePing notification profile by ID.
+Reads one NodePing notification profile by ID. A notification profile is a named list of notification targets that checks can use.
 
 ## Example Usage
 
@@ -21,26 +27,29 @@ output "escalation_targets" {
 }
 ```
 
-Look a profile up on a subaccount:
+### Read a profile in a subaccount
 
 ```hcl
 data "nodeping_notificationprofile" "client" {
-  customer_id = "201205050153W2Q4C"
   id          = "201205050153W2Q4C-P-3QJWG"
+  customer_id = "201205050153W2Q4C"
 }
 ```
 
 ## Argument Reference
 
-- `id` - (Required) The unique identifier of the notification profile.
-- `customer_id` - (Optional) The subaccount (customer) ID to look the profile up
-  in. Defaults to the account the provider is configured for.
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `id` | Yes | The ID of the notification profile. |
+| `customer_id` | No | The ID of the account that owns the profile. Set `customer_id` to read an object that belongs to a subaccount. If you do not set it, the provider uses its own `customer_id`, or the account of the API token. |
 
 ## Attribute Reference
 
-- `name` - The name of the notification profile.
-- `notifications` - Notification targets belonging to the profile, in the order
-  NodePing reports them. Each entry contains:
-  - `contact_id` - The contact address ID or contact group ID that is notified.
-  - `delay` - Delay in minutes before this target is notified.
-  - `schedule` - Notification schedule name.
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `customer_id` | String | The ID of the account that owns the profile. |
+| `name` | String | The name of the notification profile. |
+| `notifications` | List of Object | The notification targets, in the order that NodePing gives them. |
+| `notifications[].contact_id` | String | The ID of the contact address or contact group that gets the notification. |
+| `notifications[].delay` | Number | The time before NodePing notifies this target, in minutes. |
+| `notifications[].schedule` | String | The name of the notification schedule. |

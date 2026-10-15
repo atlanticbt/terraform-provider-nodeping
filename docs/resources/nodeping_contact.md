@@ -2,16 +2,24 @@
 page_title: "nodeping_contact Resource - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Manages a NodePing contact for receiving notifications.
+  Manages a NodePing contact and its notification addresses.
 ---
+<!--
+doc: registry-resource
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_contact (Resource)
 
-Manages a NodePing contact for receiving notifications.
+Manages a NodePing contact. A contact owns one or more addresses, for example an email address, a phone number, or a webhook URL. NodePing gives each address its own address ID. Checks and contact groups notify an address ID, not a contact ID. See [Address ID and contact ID](#address-id-and-contact-id).
+
+> **SECURITY:** The provider does not mark `address`, `headers`, `querystrings`, or `data` as sensitive. Webhook headers and query strings often contain an authentication token. These values appear in plan output, in the state file, and in configuration that `tofu plan -generate-config-out` writes. Protect the state file as a secret. Use a variable for each token, not a literal value.
 
 ## Example Usage
 
-### Basic Contact with Email
+### Contact with one email address
 
 ```hcl
 resource "nodeping_contact" "basic" {
@@ -25,7 +33,7 @@ resource "nodeping_contact" "basic" {
 }
 ```
 
-### Contact with Multiple Addresses
+### Contact with more than one address
 
 ```hcl
 resource "nodeping_contact" "multi" {
@@ -39,7 +47,7 @@ resource "nodeping_contact" "multi" {
 
   address {
     type    = "sms"
-    address = "+1-555-123-4567"
+    address = "+15555550123"
   }
 
   address {
@@ -50,7 +58,7 @@ resource "nodeping_contact" "multi" {
 }
 ```
 
-### Contact with Webhook
+### Contact with a webhook
 
 ```hcl
 resource "nodeping_contact" "webhook" {
@@ -71,7 +79,42 @@ resource "nodeping_contact" "webhook" {
 }
 ```
 
-### Contact with Notification Suppression
+### Webhook with a JSON body in a heredoc
+
+You can write a JSON body with heredoc syntax. If the value is valid JSON, the provider compares it as JSON, not as text. See [Webhook `data` comparison](#webhook-data-comparison).
+
+```hcl
+variable "teams_webhook_key" {
+  type      = string
+  sensitive = true
+}
+
+resource "nodeping_contact" "msteams" {
+  name     = "MS Teams Notifications"
+  custrole = "notify"
+
+  address {
+    type    = "webhook"
+    address = "https://outlook.office.com/webhook/..."
+    action  = "post"
+    headers = {
+      "content-type" = "application/json"
+    }
+    querystrings = {
+      "key" = var.teams_webhook_key
+    }
+    data = <<-EOT
+      {
+        "@type": "MessageCard",
+        "title": "Host {label} : {type} is {event}",
+        "text": "{message}"
+      }
+    EOT
+  }
+}
+```
+
+### Contact with notification suppression
 
 ```hcl
 resource "nodeping_contact" "critical_only" {
@@ -87,117 +130,143 @@ resource "nodeping_contact" "critical_only" {
 }
 ```
 
-## Argument Reference
+### Contact in a subaccount
 
-### Top-Level Arguments
+```hcl
+resource "nodeping_contact" "client_ops" {
+  customer_id = "201205050153W2Q4C"
+  name        = "Client Operations"
 
-- `name` - (Optional) The name of the contact. Used as a display label. NodePing has no way
-  to store an empty name, so `name = ""` behaves as if the attribute were omitted and will
-  show a permanent diff; leave it out instead. At most 1024 characters.
-- `custrole` - (Optional) The permission role for this contact. Valid values: `owner`, `edit`, `view`, `notify`. Defaults to `notify`.
-  - `owner` - The account's own login contact. Accepted so owner contacts can be imported.
-  - `edit` - Can edit account settings and checks
-  - `view` - Can view account settings and checks
-  - `notify` - Can only receive notifications
+  address {
+    type    = "email"
+    address = "ops@client.example.com"
+  }
+}
+```
 
-### Address Block
+## Schema
 
-The `address` block supports the following arguments:
+### Optional
 
-- `type` - (Optional) The type of notification address. Required on every address NodePing
-  has not created yet; the provider refuses a new address without one. Owner and login
-  addresses are stored by NodePing with no type, and are imported with `type` unset. Values:
-  - `email` - Email address
-  - `sms` - SMS phone number
-  - `voice` - Voice call phone number
-  - `webhook` - HTTP webhook
-  - `slack` - Slack webhook
-  - `pushover` - Pushover notification
-  - `pagerduty` - PagerDuty integration
-  - `hipchat` - HipChat (legacy)
+- `customer_id` (String) The customer ID of the subaccount that owns the contact. Set it to manage a contact in a subaccount. If you do not set it, the provider records the customer ID that NodePing returns. Changing it forces replacement.
+- `custrole` (String) The permission role of the contact. Allowed values: `owner`, `edit`, `view`, `notify`. Default `notify`.
+  - `owner`: the login contact of the account. The provider accepts this value so that you can import owner contacts.
+  - `edit`: the contact can edit account settings and checks.
+  - `view`: the contact can view account settings and checks.
+  - `notify`: the contact only receives notifications.
+- `name` (String) The name of the contact, used as a label. At most 1024 characters. NodePing cannot store an empty name. If you set `name = ""`, every plan shows a diff. Omit the attribute instead.
 
-- `address` - (Required) The address value, 1 to 2048 characters. Format depends on type:
-  - Email: `user@example.com`
-  - SMS/Voice: `+1-555-123-4567`
-  - Webhook: `https://example.com/webhook`
+### Read-Only
 
-  Not marked sensitive, so it is shown in plan output. Marking it sensitive would make the
-  contact impossible to import: `tofu plan -generate-config-out` writes `null` for a sensitive
-  attribute, and a required attribute set to `null` is a configuration error. The value is an
-  email address or phone number rather than a credential, and NodePing displays it in its own
-  UI. `headers` and `querystrings` are treated the same way, for the reason given under
-  [Webhook-Specific Arguments](#webhook-specific-arguments).
+- `id` (String) The contact ID, for example `201205050153W2Q4C-BKPGH`. This is not an address ID.
 
-- `suppress_up` - (Optional) Suppress "up" notifications. Defaults to `false`.
-- `suppress_down` - (Optional) Suppress "down" notifications. Defaults to `false`.
-- `suppress_first` - (Optional) Suppress "first result" notifications. Defaults to `false`.
-- `suppress_diag` - (Optional) Must be `false`, which is the default. NodePing accepts
-  `suppressdiag` on a contact address, discards it, and never returns it, so a `true` here
-  would leave state claiming a suppression that is not in effect. The provider rejects it at
-  plan time. Use `suppress_all` to stop notifications to an address.
-- `suppress_all` - (Optional) Suppress all notifications. Defaults to `false`.
-- `mute` - (Optional) Mute all notifications to this address. Defaults to `false`.
+### Nested Schema for `address`
 
-#### Webhook-Specific Arguments
+The `address` block is a list. Each block is one notification address.
 
-- `action` - (Optional) HTTP method for webhook requests. Valid values: `get`, `put`, `post`, `head`, `delete`. Defaults to `get`.
-- `headers` - (Optional) Map of HTTP headers to send with webhook requests.
-- `querystrings` - (Optional) Map of query string parameters to append to webhook URL.
+Required:
 
-  Neither is marked sensitive, so both appear in plan output and in generated configuration. That
-  is deliberate: a sensitive attribute is written as `null` by `tofu plan -generate-config-out`,
-  so an imported webhook contact would plan `(sensitive value) -> null` and the apply would clear
-  the real values — silently, because the diff shows `(sensitive value)` on both sides.
+- `address` (String) The destination: an email address, a phone number, a webhook URL, or a service key. 1 to 2048 characters. Examples: `user@example.com`, `+15555550123`, `https://example.com/webhook`.
 
-  A value NodePing stores as a JSON object (an OpsGenie integration keeps a custom field this
-  way) is read as its JSON text and sent back as a JSON object. Only text that parses as a
-  JSON object or array is sent that way; everything else is sent as a string.
+Optional:
 
-  These frequently carry an authentication token. Configuration generated from an account that
-  uses webhook auth therefore contains live credentials: scrub the file before committing it, and
-  prefer a variable reference over the literal value. See A-015 in `docs/assumptions.md`.
-- `data` - (Optional) Request body for POST/PUT webhook requests. At most 65536 characters.
+- `type` (String) The address type. Common values: `email`, `sms`, `voice`, `webhook`, `slack`, `hipchat`, `pushover`, `pushbullet`, `rocketchat`, `pagerduty`. The provider does not limit the values; NodePing validates them. Every new address must have a type. If a new address has no type, the apply fails with `Missing Address Type`. NodePing stores owner and login addresses without a type, so an import leaves `type` unset on them.
+- `suppress_up` (Boolean) If `true`, NodePing does not send "up" notifications to this address. Default `false`.
+- `suppress_down` (Boolean) If `true`, NodePing does not send "down" notifications to this address. Default `false`.
+- `suppress_first` (Boolean) If `true`, NodePing does not send "first result" notifications to this address. Default `false`.
+- `suppress_diag` (Boolean) Must be `false`. Default `false`. NodePing accepts this field on an address, discards it, and never returns it. A `true` value fails validation at plan time. To stop all notifications to an address, use `suppress_all`.
+- `suppress_all` (Boolean) If `true`, NodePing sends no notifications to this address. Default `false`.
+- `mute` (Boolean) If `true`, the address is muted. Default `false`. The provider sends an explicit `false`, so an unmute reaches NodePing.
+- `action` (String) The HTTP method for a webhook address. Allowed values: `get`, `put`, `post`, `head`, `delete`. The provider sets no default.
+- `headers` (Map of String) HTTP headers for a webhook address. Not sensitive. See the SECURITY notice at the top of this page.
+- `querystrings` (Map of String) Query string parameters for a webhook address. Not sensitive. See the SECURITY notice at the top of this page.
+- `data` (String) The request body for a webhook address, for `post` and `put`. At most 65536 characters. If the value is valid JSON, the provider compares it as JSON. See [Webhook `data` comparison](#webhook-data-comparison).
+- `priority` (Number) The priority for a Pushover address. Allowed range: `-2` to `2`. The provider sets no default.
 
-#### Pushover-Specific Arguments
+Read-Only:
 
-- `priority` - (Optional) Pushover notification priority. Valid values: `-2` to `2`. Defaults to `2`.
-
-## Attribute Reference
-
-In addition to all arguments above, the following attributes are exported:
-
-- `id` - The unique identifier of the contact.
-- `customer_id` - The customer ID (account ID) that owns this contact.
-
-Each `address` block also exports:
-
-- `id` - The unique identifier of the address within the contact.
+- `id` (String) The address ID that NodePing assigns, for example `K5SP9CQP`. You cannot set it. Use this value in contact group `members` and in check notifications.
 
 ## Import
 
-Contacts can be imported using the contact ID:
+Import a contact in the account of the API token by its contact ID:
 
 ```shell
-terraform import nodeping_contact.example 201205050153W2Q4C-BKPGH
+tofu import nodeping_contact.example 201205050153W2Q4C-BKPGH
 ```
 
-For SubAccount contacts, use the format `customer_id:contact_id`:
+Import a contact in a subaccount with the format `customer_id:contact_id`:
 
 ```shell
-terraform import nodeping_contact.example 201205050153W2Q4C:201205050153W2Q4C-BKPGH
+tofu import nodeping_contact.example 201205050153W2Q4C:201205050153W2Q4C-BKPGH
 ```
 
-NodePing returns a contact's addresses as a map keyed by address ID, so an imported contact
-lists its `address` blocks in ID order rather than in the order the configuration writes
-them. For a contact with more than one address the first plan after import may therefore show
-the blocks being reordered. The apply is a no-op at the API — addresses are matched by
-content, so no address ID changes — and the plan after it is empty.
+On OpenTofu 1.12 and later, you can also import with a resource identity. The identity has two attributes:
+
+| Attribute | Required | Description |
+|---|---|---|
+| `id` | Yes | The contact ID. |
+| `customer_id` | No | The customer ID of the subaccount. Omit it for the account of the API token. |
+
+```hcl
+import {
+  to = nodeping_contact.example
+  identity = {
+    id          = "201205050153W2Q4C-BKPGH"
+    customer_id = "201205050153W2Q4C"
+  }
+}
+```
+
+> **CAUTION:** Import writes `customer_id` to state, and the provider uses it for every later API call. `customer_id` forces replacement. If your configuration has a different value, the next plan replaces the contact. Set `customer_id` in the configuration to the imported value.
+
+NodePing returns the addresses of a contact as a map keyed by address ID. After import, the `address` blocks in state are in address ID order, not in configuration order. Thus the first plan after import can show the blocks in a new order. The apply sends no address changes, because the provider matches addresses by content. After that apply, the plan is empty.
+
+> **SECURITY:** If the account uses webhook authentication, `tofu plan -generate-config-out` writes live tokens into the generated file. Remove the tokens from the file before you commit it. Replace each token with a variable reference.
+
+## Address ID and contact ID
+
+A check notifies an address ID or a contact group ID. A check never notifies a contact ID. The `notifications.contact_id` attribute of `nodeping_check` has a misleading name: give it an address ID.
+
+| Value | Example | Where to use it |
+|---|---|---|
+| Contact ID | `201205050153W2Q4C-BKPGH` | Import of `nodeping_contact`. The `nodeping_contact` data source. |
+| Address ID | `K5SP9CQP` | `notifications.contact_id` of `nodeping_check`. `members` of `nodeping_contactgroup`. |
+
+Use `nodeping_contact.x.address[0].id` to get an address ID:
+
+```hcl
+resource "nodeping_check" "web" {
+  # ...
+
+  notifications {
+    contact_id = nodeping_contact.x.address[0].id
+  }
+}
+```
+
+Do not use `nodeping_contact.x.id` where NodePing expects an address ID. NodePing accepts a contact ID there, but it sends no notifications to it.
+
+The provider matches each `address` block to a NodePing address by content (`type` and `address`), not by list position. This has these results:
+
+- If you add, remove, or reorder `address` blocks, each address keeps its address ID.
+- If you change the `address` value and keep the same `type`, the address keeps its address ID.
+- If you change the `type`, NodePing creates a new address with a new address ID.
+
+## Webhook `data` comparison
+
+If both the configured `data` value and the value from NodePing are valid JSON, the provider compares them as JSON. Whitespace, indentation, and key order do not cause a diff. If one value is not JSON, for example a form-encoded body, the provider compares the text exactly.
+
+State keeps the exact string from your configuration. NodePing can return `data` as a string or as a decoded JSON object. If the returned value is equivalent JSON, the provider keeps your string.
+
+Two parts of the provider do this comparison:
+
+- A custom value type with semantic equality. It applies during refresh, create, and update. It prevents the error `Provider produced inconsistent result after apply`.
+- A plan modifier. It applies during plan. After an import, state holds the encoding that NodePing returned. The plan modifier keeps that state value if your configuration is equivalent JSON, so the plan shows no whitespace diff.
 
 ## Notes
 
-- Contacts with `edit` or `view` roles will receive a welcome email with login credentials.
-- To avoid welcome emails, create the contact with `notify` role first, then update to `edit` or `view`.
-- Address IDs are generated by NodePing and cannot be set manually.
-- A contact cannot be reduced to zero addresses. NodePing refuses the update, so the
-  provider rejects it at plan time: keep at least one address, or destroy the contact.
-  A contact created with no addresses at all is allowed.
+- NodePing sends a welcome email with login credentials to a contact with the `edit` or `view` role.
+- To prevent the welcome email, create the contact with the `notify` role first. Then change the role to `edit` or `view`.
+- NodePing does not let a contact go from one or more addresses to zero addresses. If an update removes every `address` block, the apply fails with `Cannot Remove Every Contact Address`. Keep at least one address, or destroy the contact. You can create a contact with no addresses.
+- In a webhook `headers` or `querystrings` value, NodePing can store a JSON object, for example an OpsGenie custom field. The provider reads that value as JSON text. When the text is a JSON object or array, the provider sends it back as JSON. The provider sends all other values as strings.

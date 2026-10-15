@@ -1,120 +1,130 @@
-# ADR-003: Check Resource Design - Single Resource with Type-Specific Attributes
+<!--
+doc: adr
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
-**Status**: Accepted  
-**Date**: 2026-01-27  
-**Decision Makers**: Terraform Provider Engineering
+# ADR-003: One Check Resource with Type-Specific Attributes
+
+An ADR (Architecture Decision Record) records one design decision and its reasons.
+
+| Field | Value |
+|---|---|
+| Status | Accepted |
+| Date | 2026-01-27 |
+| Decision makers | Provider engineering |
 
 ## Context
 
-NodePing supports 30+ check types, each with different required and optional fields. We need to decide how to model this in Terraform:
+NodePing supports more than 30 check types. Each type has different required and optional
+fields. We had three possible models:
 
-1. **Single Resource**: One `nodeping_check` resource with all possible attributes
-2. **Multiple Resources**: Separate resources per type (e.g., `nodeping_check_http`, `nodeping_check_dns`)
-3. **Hybrid**: Base resource with type-specific nested blocks
+| Option | Description |
+|---|---|
+| One resource | One `nodeping_check` resource with all possible attributes |
+| Many resources | One resource for each type, for example `nodeping_check_http` and `nodeping_check_dns` |
+| Hybrid | One base resource with a nested block for each type |
 
 ## Decision
 
-We will use a **Single Resource** approach with:
+We use one resource:
 
-- Common attributes available for all check types
-- Type-specific attributes validated based on `type` field
-- Clear documentation of which attributes apply to which types
+- All check types share the common attributes.
+- The provider validates the type-specific attributes against the `type` attribute.
+- The documentation shows which attributes apply to which types.
 
 ```hcl
 resource "nodeping_check" "http" {
   type   = "HTTP"
   target = "https://example.com"
-  # HTTP-specific attributes available
 }
 
 resource "nodeping_check" "dns" {
-  type           = "DNS"
-  target         = "8.8.8.8"
-  dns_type       = "A"
-  dns_to_resolve = "example.com"
-  # DNS-specific attributes available
+  type         = "DNS"
+  target       = "8.8.8.8"
+  dnstype      = "A"
+  dnstoresolve = "example.com"
 }
 ```
 
 ## Rationale
 
-### Advantages of Single Resource
+### Advantages
 
-1. **API Alignment**: NodePing API uses single endpoint for all check types
-2. **Simpler Codebase**: One resource implementation, not 30+
-3. **Easier Maintenance**: API changes require updating one resource
-4. **Flexible**: Users can change check types without resource replacement
-5. **Consistent UX**: Same resource name regardless of check type
+| Advantage | Description |
+|---|---|
+| API alignment | The NodePing API uses one endpoint for all check types. |
+| Simple code | One resource to maintain, not more than 30. |
+| Easy maintenance | An API change needs a change to one resource only. |
+| Flexible | A change of `type` is an update in place. It does not replace the resource. |
+| Consistent | The resource name is the same for all check types. |
 
 ### Disadvantages
 
-1. **Validation Complexity**: Must validate attributes per type
-2. **Documentation**: Need clear per-type attribute documentation
-3. **Schema Size**: Large schema with many optional attributes
+| Disadvantage | Description |
+|---|---|
+| Complex validation | The provider must validate attributes for each type. |
+| Documentation | The documentation must show which attributes apply to each type. |
+| Large schema | The schema has many optional attributes. |
 
 ### Mitigations
 
-1. **Custom Validators**: Implement type-aware validation
-2. **Generated Docs**: Auto-generate per-type documentation
-3. **Attribute Grouping**: Group related attributes logically
+1. Validate attributes against the type. See `internal/resources/check/validate.go:28`.
+2. Document the applicable types for each attribute.
+3. Put related attributes in groups.
 
-## Implementation Details
+## Implementation
 
-### Attribute Categories
+### Attribute groups
 
-1. **Universal**: `id`, `type`, `target`, `label`, `enabled`, `interval`, `threshold`, `sens`, `notifications`, `tags`
-2. **Location**: `runlocations`, `homeloc`
-3. **Content Match**: `contentstring`, `regex`, `invert`
-4. **HTTP**: `follow`, `method`, `statuscode`, `sendheaders`, `receiveheaders`, `data`, `postdata`
-5. **DNS**: `dns_type`, `dns_to_resolve`, `dns_section`, `dns_rd`, `transport`
-6. **SSL/TLS**: `warningdays`, `servername`, `verify`, `secure`
-7. **Auth**: `username`, `password`, `sshkey`, `clientcert`
-8. **Database**: `database`, `query`, `fields`, `namespace`
-9. **Network**: `port`, `ipv6`
+| Group | Attributes |
+|---|---|
+| Universal | `id`, `type`, `target`, `label`, `enabled`, `interval`, `threshold`, `sens`, `notifications`, `tags` |
+| Location | `runlocations`, `homeloc` |
+| Content match | `contentstring`, `regex`, `invert` |
+| HTTP | `follow`, `method`, `statuscode`, `sendheaders`, `receiveheaders`, `data`, `postdata` |
+| DNS | `dnstype`, `dnstoresolve`, `dnssection`, `dnsrd`, `transport` |
+| SSL/TLS | `warningdays`, `servername`, `verify`, `secure` |
+| Authentication | `username`, `password`, `password_wo`, `sshkey`, `clientcert` |
+| Database | `database`, `query`, `fields`, `namespace` |
+| Network | `port`, `ipv6` |
 
-### Validation Strategy
+### Validation
 
-```go
-func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-    var data CheckResourceModel
-    resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
-    
-    switch data.Type.ValueString() {
-    case "HTTP":
-        // Validate HTTP-specific requirements
-    case "DNS":
-        // Validate DNS-specific requirements
-        if data.DNSType.IsNull() {
-            resp.Diagnostics.AddAttributeError(...)
-        }
-    // ... other types
-    }
-}
-```
+`ValidateConfig` (`internal/resources/check/validate.go:28`) calls one helper for each rule:
+
+| Helper | Rule |
+|---|---|
+| `validateCredentialRules` | A Redis Sentinel check needs `sentinelname`. `password_wo_version` needs `password_wo`. |
+| `validateTargetPresent` | A type that needs a target must have one. |
+| `validateApplicability` | An attribute set for a type that does not use it gives a warning. A boolean flag set to true for such a type gives an error. |
+| `validateMinInterval` | WHOIS and RDAP intervals must be at or above the NodePing minimum. |
+| `validateHostCredentials` | REDIS host credentials must not conflict. |
 
 ## Consequences
 
-- Single `nodeping_check` resource handles all check types
-- Type-specific validation implemented in `ValidateConfig`
-- Documentation organized by check type
-- Schema includes all possible attributes as optional
+- One `nodeping_check` resource manages all check types.
+- `ValidateConfig` does the type-specific validation.
+- The documentation shows the check types for each attribute.
+- The schema contains all possible attributes as optional.
 
-## Alternatives Considered
+## Alternatives that we rejected
 
-### Multiple Resources (Rejected)
+### Many resources
 
-- Would require 30+ resource implementations
-- Significant code duplication
-- Harder to maintain as API evolves
-- Inconsistent with NodePing API design
+- It needs more than 30 resource implementations.
+- It causes much duplicate code.
+- It is harder to maintain when the API changes.
+- It does not agree with the design of the NodePing API.
 
-### Hybrid with Nested Blocks (Rejected)
+### Hybrid with nested blocks
 
-- Complex schema with many nested blocks
-- Confusing UX (which block to use?)
-- Still requires significant validation logic
+- The schema has many nested blocks.
+- Users cannot easily know which block to use.
+- It still needs much validation logic.
 
 ## References
 
-- [NodePing Check Types](https://nodeping.com/docs-api-checks.html)
-- [Terraform Schema Design Patterns](https://developer.hashicorp.com/terraform/plugin/framework/handling-data)
+- [NodePing check types](https://nodeping.com/docs-api-checks.html)
+- [Plugin Framework: handling data](https://developer.hashicorp.com/terraform/plugin/framework/handling-data)

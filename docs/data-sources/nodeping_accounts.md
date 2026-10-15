@@ -2,16 +2,18 @@
 page_title: "nodeping_accounts Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches the NodePing account and all of its subaccounts.
+  Reads the account of the API token and all of its subaccounts.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_accounts (Data Source)
 
-Fetches the account the configured API token belongs to along with all of its subaccounts.
-
-NodePing returns the listing as a JSON object keyed by account ID, which carries no
-inherent order. The provider sorts entries by account ID so the list is stable between
-reads and does not produce a spurious diff on every plan.
+Reads the account that owns the API token and all of its subaccounts.
 
 ## Example Usage
 
@@ -38,38 +40,24 @@ output "suspended_subaccounts" {
 }
 ```
 
-## Schema
+## Argument Reference
 
-### Read-Only
+This data source has no arguments.
 
-- `accounts` (List of Object) Accounts visible to the configured API token, sorted by
-  account ID.
+## Attribute Reference
 
-<a id="nestedatt--accounts"></a>
-### Nested Schema for `accounts`
-
-Read-Only:
-
-- `id` (String) The NodePing account ID.
-- `name` (String) The account name.
-- `status` (String) The account status, `Active` or `Suspend`.
-- `active_checks` (Number) The number of active checks in the account.
-- `subaccount_count` (Number) The number of subaccounts. NodePing reports this only for the
-  primary account; it is `null` for every subaccount, which makes it the way to tell the
-  two apart.
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `accounts` | List of Object | The accounts that the API token can see, sorted by account ID. |
+| `accounts[].id` | String | The NodePing account ID. |
+| `accounts[].name` | String | The account name. |
+| `accounts[].status` | String | The account status: `Active` or `Suspend`. |
+| `accounts[].active_checks` | Number | The number of active checks in the account. |
+| `accounts[].subaccount_count` | Number | The number of subaccounts. NodePing gives this value only for the primary account. It is `null` for each subaccount. Use it to identify the primary account. |
 
 ## Notes
 
-When the provider is configured with `customer_id`, NodePing scopes this endpoint to that one
-account and returns it on its own rather than returning a listing. The data source then reports
-a single entry: the configured account, with `active_checks` at `0` and `subaccount_count` null,
-because the scoped response carries neither figure. Configure the provider without `customer_id`
-to see the primary account and every subaccount.
-
-The listing carries only these summary fields. For an account's timezone, default probe
-locations, creation date or billing date, use the
-[`nodeping_account`](nodeping_account.md) data source.
-
-A subaccount destroyed with [`nodeping_subaccount`](../resources/nodeping_subaccount.md)
-may still appear here briefly. NodePing queues account deletions rather than performing
-them inline, so the account outlives the successful destroy by a short interval.
+- NodePing returns the accounts as a JSON (JavaScript Object Notation) object keyed by account ID. A JSON object has no order. The provider sorts the list by account ID, so the plan does not show a change at each read.
+- If you set `customer_id` on the provider, NodePing limits the response to that one account. The list then has one entry. In that entry, `active_checks` is `0` and `subaccount_count` is `null`, because the limited response does not include them. To see all accounts, configure the provider without `customer_id`.
+- The list has only summary fields. For the timezone, default locations, creation date or billing date, use the [`nodeping_account`](nodeping_account.md) data source.
+- NodePing deletes accounts in a queue. A subaccount that you destroy with [`nodeping_subaccount`](../resources/nodeping_subaccount.md) can stay in this list for a short time.

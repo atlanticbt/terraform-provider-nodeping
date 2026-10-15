@@ -1,129 +1,235 @@
-# Releasing and repository settings
+<!--
+doc: releasing
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
-For maintainers. Releases are built and signed by GitHub Actions
-(`.github/workflows/release.yml`) when a `v*` tag is pushed.
+# Releasing and Repository Settings
 
-## Release signing key (one time)
+This document is for maintainers. GitHub Actions builds and signs each release when a
+maintainer pushes a `v*` tag. The workflow is `.github/workflows/release.yml`.
 
-The OpenTofu and Terraform registries verify each release by checking a detached
-GPG signature of its `SHA256SUMS` file against a public key registered for the
-`atlanticbt` namespace. Use a dedicated key for this, not a personal one.
+## Summary
 
-The Terraform Registry accepts only RSA and DSA keys; the OpenTofu registry takes
-any ASCII-armored PGP public key. An RSA 4096 key works for both:
+| Task | Frequency | Section |
+|---|---|---|
+| Create the release signing key | One time | [Release signing key](#release-signing-key) |
+| Make a release | Each release | [Make a release](#make-a-release) |
+| Register with the registries | One time, after the repository is public | [Register with the registries](#register-with-the-registries) |
+| Make the repository public | One time | [Make the repository public](#make-the-repository-public) |
+| Set up scheduled acceptance tests | One time | [Scheduled acceptance tests](#scheduled-acceptance-tests) |
 
-```sh
-gpg --quick-generate-key "Atlantic BT NodePing provider releases" rsa4096 sign 3y
-gpg --list-secret-keys --keyid-format=long "Atlantic BT NodePing provider releases"
-gpg --armor --export-secret-keys <KEY_ID> > release-key.asc   # for the Actions secret
-gpg --armor --export <KEY_ID> > release-key.pub               # for the registries
-```
+## Release signing key
 
-In **Settings > Secrets and variables > Actions**, add:
+The OpenTofu and Terraform registries verify each release. They check a detached GPG
+(GNU Privacy Guard) signature of the `SHA256SUMS` file. They use the public key that is
+registered for the `atlanticbt` namespace.
 
-| Secret | Value |
+| Fact | Value |
 |---|---|
-| `GPG_PRIVATE_KEY` | contents of `release-key.asc` |
-| `PASSPHRASE` | the key's passphrase |
+| Key type | RSA 4096. The Terraform Registry accepts only RSA and DSA keys. The OpenTofu registry accepts any ASCII-armored PGP key. |
+| Key owner | A dedicated release key. Do not use a personal key. |
+| Key name | `Atlantic BT NodePing provider releases` |
+| Validity | 3 years |
 
-Then delete `release-key.asc` locally and keep the key and passphrase in the
-password manager. Rotating the key means registering the new public key with both
-registries before the next release.
+### Create the key
 
-## Cutting a release
+> **SECURITY:** The private key signs every release. A person with this key can publish a
+> release that users trust. Do not keep the private key file after you complete step 5.
 
-1. Merge everything for the release to `main` and update `CHANGELOG.md`.
-2. Tag with your own signing key (configure `user.signingkey` once):
+1. Create the key:
+
+   ```sh
+   gpg --quick-generate-key "Atlantic BT NodePing provider releases" rsa4096 sign 3y
+   ```
+
+2. Find the key ID:
+
+   ```sh
+   gpg --list-secret-keys --keyid-format=long "Atlantic BT NodePing provider releases"
+   ```
+
+3. Export the private key for the Actions secret:
+
+   ```sh
+   gpg --armor --export-secret-keys <KEY_ID> > release-key.asc
+   ```
+
+4. Export the public key for the registries:
+
+   ```sh
+   gpg --armor --export <KEY_ID> > release-key.pub
+   ```
+
+5. In GitHub, go to **Settings > Secrets and variables > Actions**. Add these secrets:
+
+   | Secret | Value |
+   |---|---|
+   | `GPG_PRIVATE_KEY` | The contents of `release-key.asc` |
+   | `PASSPHRASE` | The passphrase of the key |
+
+6. Delete `release-key.asc` from your computer.
+7. Put the key and the passphrase in the team password manager.
+
+### Rotate the key
+
+1. Create a new key. Use the procedure in [Create the key](#create-the-key).
+2. Register the new public key with both registries.
+3. Do steps 1 and 2 before the next release. If you do not, the registries reject the
+   release.
+
+## Make a release
+
+The release workflow has three jobs. The `release` job runs only when the other two jobs
+pass.
+
+| Job | What it does |
+|---|---|
+| `verify-tag` | Stops the release if the tagged commit is not on `main`. |
+| `ci` | Runs the full CI suite on the tagged commit: `fmt-vet`, `lint`, `test`, `vulncheck` and `secret-scan`. |
+| `release` | Builds the six platform archives with GoReleaser. Signs `SHA256SUMS`. Publishes a GitHub release. |
+
+### Procedure
+
+> **SECURITY:** A pushed `v*` tag starts a signed public release. Tag only a commit that
+> has an approved pull request on `main`.
+
+1. Merge all changes for the release to `main`.
+2. Update `CHANGELOG.md`. Merge that change to `main`.
+3. Set your own signing key in Git. Do this one time only:
+
+   ```sh
+   git config --global user.signingkey <YOUR_KEY_ID>
+   ```
+
+4. Make a signed tag:
 
    ```sh
    git tag -s v1.2.0 -m "v1.2.0"
+   ```
+
+5. Push the tag:
+
+   ```sh
    git push origin v1.2.0
    ```
 
-3. The **Release** workflow runs the unit tests, builds the six platform archives,
-   signs `SHA256SUMS` and publishes a GitHub release with the archives, the
-   checksums, the signature and `terraform-provider-nodeping_<version>_manifest.json`.
+6. Go to **Actions > Release**. Make sure that all three jobs pass.
+7. Make sure that the GitHub release contains these files:
+   - The six platform archives
+   - `terraform-provider-nodeping_<version>_SHA256SUMS`
+   - The signature file for `SHA256SUMS`
+   - `terraform-provider-nodeping_<version>_manifest.json`
 
-Both registries pick up new GitHub releases on their own once the provider is
-registered.
+After you register the provider, both registries find new GitHub releases automatically.
 
-## Registering with the registries (one time, after going public)
+## Register with the registries
 
-**OpenTofu** (`registry.opentofu.org/atlanticbt/nodeping`): submissions go through
-the issue forms in `opentofu/registry`, not pull requests or the API.
+Do this one time, after the repository is public.
 
-1. Make your membership of the `atlanticbt` organization public; the key form
-   requires it.
-2. Open **Submit new Provider Signing Key**: namespace `atlanticbt`, provider name
-   `nodeping`, and the contents of `release-key.pub`.
-3. Open **Submit new OpenTofu Provider**: repository
+### OpenTofu registry
+
+The address is `registry.opentofu.org/atlanticbt/nodeping`. Submissions go through the issue
+forms in the `opentofu/registry` repository. Do not use pull requests or the API.
+
+1. Make your membership of the `atlanticbt` organization public. The key form requires
+   this.
+2. Open the **Submit new Provider Signing Key** form. Enter these values:
+   - Namespace: `atlanticbt`
+   - Provider name: `nodeping`
+   - Key: the contents of `release-key.pub`
+3. Open the **Submit new OpenTofu Provider** form. Enter the repository:
    `atlanticbt/terraform-provider-nodeping`.
 
-**Terraform** (optional): sign in to registry.terraform.io with GitHub, add the
-same public key under the `atlanticbt` namespace's signing keys, and publish the
-repository.
+### Terraform Registry (optional)
 
-## Going public
+1. Sign in to registry.terraform.io with GitHub.
+2. Add the same public key to the signing keys of the `atlanticbt` namespace.
+3. Publish the repository.
 
-The organization is on GitHub Free, so branch rulesets and secret scanning are
-only available once the repository is public. Before making it public, confirm
-that its history holds only the cleaned initial commit. Then, in one sitting:
+## Make the repository public
 
-1. **Settings > General > Danger Zone > Change visibility**: public.
-2. **Settings > Rules > Rulesets > New branch ruleset**, targeting the default
-   branch:
-   - Restrict deletions; block force pushes.
-   - Require a pull request before merging: 1 approval, require review from Code
-     Owners, dismiss stale approvals on new commits.
-   - Require status checks to pass, and the branch to be up to date: `fmt-vet`,
-     `lint`, `test`, `vulncheck`, `secret-scan`.
-   - Leave the bypass list empty.
-3. **Settings > Rules > Rulesets > New tag ruleset**, targeting `v*`:
+The organization uses GitHub Free. Branch rulesets and secret scanning are not available for
+a private repository on this plan. They become available when the repository is public.
+
+> **SECURITY:** When you make the repository public, all of its history becomes public.
+> Before step 1, make sure that the history contains only the cleaned initial commit.
+
+> **SECURITY:** Until you complete step 2, anyone with write access can push to `main`.
+> Do all steps in one session.
+
+1. Go to **Settings > General > Danger Zone > Change visibility**. Select public.
+2. Go to **Settings > Rules > Rulesets > New branch ruleset**. Target the default branch.
+   Set these rules:
+   - Restrict deletions.
+   - Block force pushes.
+   - Require a pull request before merging, with 1 approval.
+   - Require review from Code Owners.
+   - Dismiss stale approvals when new commits are pushed.
+   - Require these status checks to pass: `fmt-vet`, `lint`, `test`, `vulncheck`,
+     `secret-scan`.
+   - Require the branch to be up to date before merging.
+   - Keep the bypass list empty.
+3. Go to **Settings > Rules > Rulesets > New tag ruleset**. Target `v*`. Set these rules:
    - Restrict creations, updates and deletions.
-   - Bypass list: the `nodeping-maintainers` team, for creation only.
+   - Add the `nodeping-maintainers` team to the bypass list, for creation only.
 
-   A release is only published from a `v*` tag, and the release workflow also
-   refuses a tag whose commit is not on `main` and runs the full CI suite first.
-   The ruleset stops anyone outside the team from creating such a tag, and stops
-   everyone from moving or deleting one once it is published.
-4. **Settings > Code security**: enable secret scanning and push protection,
-   Dependabot alerts and Dependabot security updates, and private vulnerability
-   reporting (which `SECURITY.md` points reporters to).
-5. **Settings > Actions > General**: workflow permissions read-only by default.
-6. Confirm `@atlanticbt/nodeping-maintainers` exists with write access, so
-   `CODEOWNERS` resolves.
+   This ruleset stops other persons from creating a release tag. It also stops all persons
+   from moving or deleting a published tag.
+4. Go to **Settings > Code security**. Enable these features:
+   - Secret scanning
+   - Push protection
+   - Dependabot alerts
+   - Dependabot security updates
+   - Private vulnerability reporting. `SECURITY.md` tells reporters to use it.
+5. Go to **Settings > Actions > General**. Set the default workflow permissions to
+   read-only.
+6. Make sure that the team `@atlanticbt/nodeping-maintainers` exists and has write access.
+   If it does not, `CODEOWNERS` cannot find the code owners.
 
 ## CI status checks
 
-`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`. Its
-job names are the required status checks:
+`.github/workflows/ci.yml` runs on each pull request and on each push to `main`. The
+release workflow also runs it. The job names are the required status checks.
 
 | Check | What it runs |
 |---|---|
 | `fmt-vet` | `gofmt -l` and `go vet` |
 | `lint` | golangci-lint v2.14.0 |
-| `test` | unit tests with the race detector and coverage |
+| `test` | Unit tests with the race detector and coverage |
 | `vulncheck` | govulncheck v1.8.0 |
-| `secret-scan` | gitleaks over the commits the change adds |
-
-Acceptance tests are not part of CI: they need a live NodePing account and run by
-hand with `make test-acc`.
+| `secret-scan` | gitleaks v8.30.1 on the commits that the change adds |
 
 ## Scheduled acceptance tests
 
-`.github/workflows/acceptance.yml` runs the live acceptance suite every Monday and on
-demand (**Actions > acceptance > Run workflow**). It needs a disposable NodePing account
-that holds nothing but the test fixtures, never a production account.
+`.github/workflows/acceptance.yml` runs the live acceptance tests. It runs every Monday at
+06:17 UTC. You can also start it manually: **Actions > acceptance > Run workflow**.
 
-Create the environment once, under **Settings > Environments > New environment**, named
-`acceptance`:
+> **SECURITY:** The acceptance tests create and delete objects. Use a NodePing account
+> that contains only the test fixtures. Never use a production account.
 
-- **Deployment branches and tags:** selected branches, `main` only. Pull requests,
-  including those from forks, can then never read these secrets.
-- **Environment secrets:**
-  - `NODEPING_API_TOKEN`: a token scoped to the test account.
-  - `NODEPING_TEST_CHECK_ID`, `NODEPING_TEST_CONTACT_ID`, `NODEPING_TEST_CUSTOMER_ID`:
-    the fixtures described in `CONTRIBUTING.md`. Tests that need a missing fixture skip.
+### Set up the environment
 
-The subaccount lifecycle test (`make test-acc-subaccount`) is deliberately not scheduled:
-it needs a parent-account token and deletes real subaccounts.
+Do this one time.
+
+1. Go to **Settings > Environments > New environment**.
+2. Name the environment `acceptance`.
+3. Set **Deployment branches and tags** to selected branches. Select `main` only. Pull
+   requests, also from forks, then cannot read the secrets.
+4. Add these environment secrets:
+
+   | Secret | Value |
+   |---|---|
+   | `NODEPING_API_TOKEN` | A token for the test account only |
+   | `NODEPING_TEST_CHECK_ID` | The fixture check ID. See `CONTRIBUTING.md`. |
+   | `NODEPING_TEST_CONTACT_ID` | The fixture contact address ID. See `CONTRIBUTING.md`. |
+   | `NODEPING_TEST_CUSTOMER_ID` | The test account ID. See `CONTRIBUTING.md`. |
+
+A test skips when its fixture is not set.
+
+### Subaccount test
+
+The schedule does not run the subaccount lifecycle test (`make test-acc-subaccount`). That
+test needs a parent-account token. It creates and deletes real subaccounts. Run it manually,
+and only against a parent account that contains nothing else.

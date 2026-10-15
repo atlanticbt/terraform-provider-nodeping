@@ -2,12 +2,20 @@
 page_title: "nodeping_contacts Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches all NodePing contacts.
+  Reads all NodePing contacts in one account.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_contacts (Data Source)
 
-Fetches all NodePing contacts.
+Reads all NodePing contacts in one account. The result includes the address ID of each address. A check or a contact group uses an address ID, not a contact ID. See [Address ID and contact ID](../resources/nodeping_contact.md#address-id-and-contact-id).
+
+> **SECURITY:** An `address` can be a webhook URL that contains a token. The provider marks `address` as sensitive, so plan output hides it. The state file still contains the value. Protect the state file as a secret.
 
 ## Example Usage
 
@@ -21,8 +29,11 @@ output "all_contact_ids" {
 output "all_contact_names" {
   value = [for c in data.nodeping_contacts.all.contacts : c.name]
 }
+```
 
-# Find contacts by name
+### Find contacts by name
+
+```hcl
 locals {
   ops_contacts = [
     for c in data.nodeping_contacts.all.contacts : c
@@ -31,18 +42,44 @@ locals {
 }
 ```
 
-## Argument Reference
+### Collect every email address ID
 
-This data source has no required arguments.
+```hcl
+locals {
+  email_address_ids = flatten([
+    for c in data.nodeping_contacts.all.contacts : [
+      for a in c.addresses : a.id if a.type == "email"
+    ]
+  ])
+}
+```
 
-## Attribute Reference
+## Schema
 
-- `contacts` - List of all contacts. Each contact contains:
-  - `id` - The unique identifier of the contact.
-  - `customer_id` - The customer ID (account ID) that owns this contact.
-  - `name` - The name of the contact.
-  - `custrole` - The permission role.
-  - `addresses` - List of contact addresses. Each address contains:
-    - `id` - The unique identifier of the address.
-    - `type` - The type of address.
-    - `address` - The address value (sensitive).
+This data source has no arguments. To list the contacts of a subaccount, set `customer_id` on the provider.
+
+### Read-Only
+
+- `contacts` (List of Object) All contacts, sorted by contact ID. See [Nested Schema for `contacts`](#nested-schema-for-contacts).
+
+### Nested Schema for `contacts`
+
+Read-Only:
+
+- `id` (String) The contact ID, for example `201205050153W2Q4C-BKPGH`.
+- `customer_id` (String) The customer ID of the account that owns the contact.
+- `name` (String) The name of the contact. A contact without a name has an empty string.
+- `custrole` (String) The permission role: `owner`, `edit`, `view`, or `notify`.
+- `addresses` (List of Object) The addresses of the contact, sorted by address ID. See [Nested Schema for `contacts.addresses`](#nested-schema-for-contactsaddresses).
+
+### Nested Schema for `contacts.addresses`
+
+Read-Only:
+
+- `id` (String) The address ID, for example `K5SP9CQP`.
+- `type` (String) The address type. Owner and login addresses can have an empty type.
+- `address` (String, Sensitive) The email address, phone number, or URL.
+
+## Notes
+
+- This list does not include suppression flags. To read them, use the [`nodeping_contact`](nodeping_contact.md) data source.

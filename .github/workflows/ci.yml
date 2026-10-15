@@ -59,8 +59,9 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Unit tests only. Acceptance tests need a live NodePing account and run
-      # by hand (make test-acc); no NodePing credentials exist in this repo.
+      # Unit tests only. Acceptance tests need a live NodePing account; they run
+      # weekly from acceptance.yml, which reads its secrets from a protected
+      # environment that pull requests cannot reach.
       - name: go test
         run: |
           go test ./... -race -coverprofile=coverage.out -covermode=atomic
