@@ -138,9 +138,9 @@ func TestScheduleUnmarshal_AcceptsMongoStyleIDAndBareDayMap(t *testing.T) {
 // therefore never produce a schedule ID.
 func TestScheduleUnmarshal_NeverTakesTheIDFromTheBody(t *testing.T) {
 	bodies := []string{
-		`{"id":"20260922144954LK9ZD3","data":{"monday":{"allday":true}}}`,
-		`{"_id":"20260922144954LK9ZD3","monday":{"allday":true}}`,
-		`{"ok":true,"id":"20260922144954LK9ZD3"}`,
+		`{"id":"20210101000000EXAMPL","data":{"monday":{"allday":true}}}`,
+		`{"_id":"20210101000000EXAMPL","monday":{"allday":true}}`,
+		`{"ok":true,"id":"20210101000000EXAMPL"}`,
 	}
 
 	for _, body := range bodies {
@@ -278,7 +278,7 @@ func TestListSchedules_FillsIDFromMapKey(t *testing.T) {
 
 func TestListSchedules_KeepsTheMapKeyWhenTheEntryReportsAnotherID(t *testing.T) {
 	c := newScheduleTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.WriteString(w, `{"Days":{"id":"20260922144954LK9ZD3","data":{"monday":{"allday":true}}}}`); err != nil {
+		if _, err := io.WriteString(w, `{"Days":{"id":"20210101000000EXAMPL","data":{"monday":{"allday":true}}}}`); err != nil {
 			t.Errorf("write failed: %v", err)
 		}
 	})
@@ -347,7 +347,7 @@ func TestGetSchedule_ReturnsSchedule(t *testing.T) {
 
 func TestGetSchedule_KeepsThePathIDWhenTheResponseReportsAnotherID(t *testing.T) {
 	c := newScheduleTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.WriteString(w, `{"id":"20260922144954LK9ZD3","data":{"monday":{"allday":true}}}`); err != nil {
+		if _, err := io.WriteString(w, `{"id":"20210101000000EXAMPL","data":{"monday":{"allday":true}}}`); err != nil {
 			t.Errorf("write failed: %v", err)
 		}
 	})
@@ -520,7 +520,7 @@ func TestPutSchedule_OverridesAMismatchedBodyID(t *testing.T) {
 // ID, which OpenTofu rejected as an inconsistent result after apply.
 func TestPutSchedule_KeepsThePathIDWhenTheResponseReportsTheAccountID(t *testing.T) {
 	c := newScheduleTestClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if _, err := io.WriteString(w, `{"ok":true,"id":"20260922144954LK9ZD3"}`); err != nil {
+		if _, err := io.WriteString(w, `{"ok":true,"id":"20210101000000EXAMPL"}`); err != nil {
 			t.Errorf("write failed: %v", err)
 		}
 	})

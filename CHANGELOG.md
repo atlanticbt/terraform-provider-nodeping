@@ -4,6 +4,39 @@ All notable changes to this provider are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
+## [1.1.0] — 2026-10-05
+
+Verified against the live NodePing API. Every resource now has acceptance tests, and the
+defects they and a large production import found are fixed. Observed API behaviour is
+recorded in `docs/assumptions.md` (A-016 to A-033).
+
+### Fixed
+
+- `nodeping_schedule` could not create a schedule: the identifier was taken from the
+  response body, which carries the account ID instead.
+- `nodeping_maintenance` could not create, update or read windows, which NodePing returns
+  keyed by ID inside a wrapper.
+- `default_tags` produced an invalid plan for checks with tags of their own; the merged set
+  is now the computed `tags_all`.
+- Untagged checks planned a `tags_all` change on every run.
+- Disabled checks were unreadable because NodePing returns `queue` as `false`.
+- Schedules with days off were unreadable because NodePing returns `time1` as `false`.
+- Owner and login contacts, contacts with object-valued webhook query strings, and
+  subaccounts could not be imported.
+- Zero values of `sens`, `statuscode`, `warningdays`, `volumemin` and `port` were stored
+  as empty, because NodePing treats a numeric `0` as empty; they are now sent as `"0"`.
+- WHOIS and RDAP intervals below NodePing's minimum drifted forever.
+- `suppress_diag = true`, replacing a contact's whole address set, and nameless contacts
+  produced inconsistent results.
+- A failed create could leave an object in NodePing with nothing in state pointing at it.
+
+### Changed
+
+- Changing `contactname` or `email` on an existing subaccount is now a plan-time error
+  instead of a replacement, which would have deleted everything in the subaccount.
+- `sendheaders`, contact `address`, `headers` and `querystrings` are no longer sensitive,
+  so generated configuration can round-trip them (A-015).
+
 ## [1.0.0] — 2026-08-27
 
 First Atlantic BT release. Completes API coverage, keeps credentials out of state, and
@@ -125,19 +158,8 @@ anything but alphanumerics and hyphens rather than escaping them, requires an `h
 endpoint outside loopback, and reads the token from the environment so it never reaches
 `ps` output.
 
-**Provider mirror publishing**
-
-- `tools/mirror-index` — generates the OpenTofu network mirror index documents with `h1:`
-  hashes, computed with the same dirhash algorithm OpenTofu uses. Kept as a separate Go
-  module so the build tooling's dependencies stay out of the provider's dependency graph.
-  Uploading archives alone produces a non-functional mirror; without the index documents
-  OpenTofu cannot enumerate or resolve any version, and without hashes it installs with no
-  verification at all.
-- Release pipeline publishes to the mirror over Bitbucket OIDC — no AWS access keys stored
-  as repository variables. Archives upload before the index that references them, so the
-  mirror never advertises a version that cannot be downloaded.
-- `docs/mirror.md` — the remaining AWS setup (bucket, CloudFront, OIDC trust policy scoped
-  to this repository, IAM permissions scoped to the one prefix) and consumer configuration.
+**Release tooling** for publishing builds to a private provider mirror. It was replaced in
+1.1.x by tag-triggered CI releases to the public registries.
 
 ### Changed
 
@@ -148,14 +170,9 @@ endpoint outside loopback, and reads the token from the environment so it never 
 - `CheckCreateRequest.Tags` is now `*[]string`. A plain slice with `omitempty` dropped an
   empty array, making "remove the last tag" a silent no-op.
 - `terraform-plugin-testing` v1.16.0 added as a real dependency.
-- **GPG signing removed from the release pipeline.** OpenTofu enforces signature validation
-  only for self-hosted *origin registries*; filesystem, network, and OCI mirrors require no
-  signature, no `SHA256SUMS`, and no registry manifest. We publish through a network mirror,
-  so a signature would have been generated, stored, and never verified — while adding key
-  rotation and a `GPG_PASSPHRASE` variable to the operational surface. Integrity comes from
-  the `h1:` hashes instead, which OpenTofu does check on install and records in the
-  consumer's lock file. The reasoning and the path back are documented in `.goreleaser.yml`
-  and `docs/mirror.md`.
+- **GPG signing removed from the release pipeline** while releases went only to a
+  private mirror, which does not verify signatures. Registry releases sign their checksums
+  again.
 
 - **Attribute removal now produces a diff for 24 check attributes.** `Optional + Computed`
   was over-applied. It is only required where NodePing supplies a value the practitioner
@@ -229,10 +246,6 @@ endpoint outside loopback, and reads the token from the environment so it never 
 - **`checktoken` regeneration is unsupported.** NodePing's documentation is
   self-contradictory on this attribute; the correct shape is a separate resource, not an
   attribute. See A-011.
-- **The provider mirror does not exist yet.** The publishing pipeline and index generator
-  are complete, but the S3 bucket, CloudFront distribution, and OIDC role are not
-  provisioned. Until they are, the only install path is `make install` to a local
-  filesystem mirror. See `docs/mirror.md`.
 
 ---
 

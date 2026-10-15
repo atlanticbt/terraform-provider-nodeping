@@ -130,12 +130,15 @@ body=$(printf '{"id":"ad-hoc","name":"%s","duration":%s,"enabled":true,"checklis
 
 printf 'starting ad-hoc maintenance: %s check(s) for %s minute(s)\n' "$count" "$duration" >&2
 
-# The token goes in the basic-auth username via --user, which curl hides from
-# `ps` on most platforms; -sS keeps output quiet but still reports errors.
+# The token reaches curl as a config file on stdin (-K -), never on the command
+# line, so it cannot appear in the process list. Backslashes and double quotes
+# are escaped for curl's quoted-string syntax. -sS keeps output quiet but still
+# reports errors.
+token_escaped=${NODEPING_API_TOKEN//\\/\\\\}
+token_escaped=${token_escaped//\"/\\\"}
 response=$(
-	curl -sS \
+	printf 'user = "%s:"\n' "$token_escaped" | curl -sS -K - \
 		--max-time "$HTTP_TIMEOUT" \
-		--user "${NODEPING_API_TOKEN}:" \
 		-H 'Content-Type: application/json' \
 		-w '\n%{http_code}' \
 		-X POST \

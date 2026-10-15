@@ -2,12 +2,13 @@
 
 // Package subaccount's acceptance test.
 //
-// !!! THIS TEST CREATES AND DESTROYS A REAL, BILLABLE NODEPING SUBACCOUNT !!!
+// !!! THIS TEST CREATES AND DESTROYS A REAL NODEPING SUBACCOUNT !!!
 //
-// It must be pointed at a dedicated test account — never a client subaccount
-// and never the parent account. The subaccount it creates is destroyed at the
-// end of the run, and destroying a subaccount destroys every check, contact and
-// stored result inside it.
+// Creating subaccounts needs a token for a parent account, so this test runs
+// with more privilege than any other. Point it at a parent account used only
+// for testing, never one whose subaccounts hold real monitoring. The subaccount
+// it creates is destroyed at the end of the run, and destroying a subaccount
+// destroys every check, contact and stored result inside it.
 //
 // Build tag: this file is excluded from the default build, so `make test-acc`
 // does not create a subaccount. Run it deliberately with its own target:
@@ -18,9 +19,9 @@
 // pending terraform-plugin-testing entering go.mod. That dependency landed, the
 // tag did not, and for a while the test ran as part of every acceptance run
 // with nothing but an environment variable standing between it and the parent
-// account. The tag is now permanent and the separation is the point: creating a
-// billable account is not something an ordinary test run should be able to do
-// by accident.
+// account. The tag is now permanent and the separation is the point: creating
+// and deleting a real account is not something an ordinary test run should be
+// able to do by accident.
 //
 // TF_ACC_TERRAFORM_PATH must point at `tofu`; without it plugin-testing
 // downloads HashiCorp Terraform and tests the wrong binary. The make target

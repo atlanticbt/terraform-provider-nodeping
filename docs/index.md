@@ -13,8 +13,7 @@ The NodePing provider allows you to manage [NodePing](https://nodeping.com/) mon
 > per-resource `customer_id` or the datasource filter arguments. The [README](../README.md) is
 > authoritative until `tfplugindocs` generation lands — see [roadmap](roadmap.md).
 >
-> Installation is via the ABT private mirror, not a public registry. The `source` address
-> below only resolves with a `provider_installation` block configured; see the README.
+> The provider is published to the OpenTofu Registry as `atlanticbt/nodeping`.
 
 ## Example Usage
 
@@ -22,8 +21,8 @@ The NodePing provider allows you to manage [NodePing](https://nodeping.com/) mon
 terraform {
   required_providers {
     nodeping = {
-      source  = "atlanticbt.com/abt/nodeping"
-      version = "~> 0.2"
+      source  = "atlanticbt/nodeping"
+      version = "~> 1.1"
     }
   }
 }

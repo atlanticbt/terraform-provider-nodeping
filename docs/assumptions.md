@@ -1,7 +1,8 @@
 # Assumptions and Accepted Risks
 
-Non-obvious decisions taken in this provider, with the reasoning. Per the ABT golden
-rules, anything that would surprise a reviewer belongs here.
+Non-obvious decisions taken in this provider, with the reasoning. Anything that would
+surprise a reviewer belongs here. Where an entry says something was observed against the
+live API, it was reproduced with direct calls to NodePing, not inferred from documentation.
 
 ---
 
@@ -26,7 +27,7 @@ protect state — it is not a mitigation on its own. Consumers should enable Ope
 encryption regardless, and must use monitoring-only credentials with minimum privilege,
 because NodePing's own storage remains cleartext.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -67,7 +68,7 @@ as absence would make OpenTofu drop the resource from state and recreate live
 infrastructure on the next apply. The cost of the narrow list is that an unrecognised
 absence phrasing surfaces as an ordinary error, which is the safe direction to fail.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -102,7 +103,7 @@ appears in `ps` output.
 rather than adopt the design (opentofu#3309), so there is no dated horizon for replacing
 the workaround with a first-class resource.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -116,7 +117,7 @@ permanently. Re-enabling notifications does not restore contacts that were suppr
 individually, so setting it to `false` does not describe a state the provider can
 guarantee. It is an incident-response switch, not configuration.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -134,7 +135,7 @@ modifier would read `null -> "value"` as a change and **destroy a freshly import
 subaccount**. With the conditional modifier, the first apply after import simply records
 them.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -146,7 +147,7 @@ them.
 `lam`, but both account `PUT` and check `runlocations` document `lam`. Treated as a
 documentation bug rather than a real constraint. Rejecting it would block valid configs.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -182,13 +183,13 @@ uncertainty resolves in favour of keeping Computed.
 **Mitigation for what remains:** to clear one of the still-Computed attributes, set it
 explicitly to its zero value rather than deleting the line.
 
-**Amended 2026-09-22 (SYS-79):** `tags` was on the kept-Computed list because `ModifyPlan`
+**Amended 2026-09-22:** `tags` was on the kept-Computed list because `ModifyPlan`
 wrote a merged value into the plan. That was itself the bug recorded in A-020: Terraform
 rejects a planned value that does not match a known configuration value. With the merge
 moved to the new computed `tags_all`, `tags` carries nothing the API supplies and is now
 plain `Optional`, covered by the removal test table like the other twenty-four.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -202,7 +203,7 @@ examples. `contentstring` is allowed on DNS and DOHDOT because the documented DN
 uses it. `CLUSTER` is in the no-target-required set. An over-tight validator blocks valid
 configurations, which is a worse failure than a permissive one that surfaces at apply.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -218,26 +219,23 @@ protocol-6-native, so every modern framework provider depends on it.
 **Mitigation:** If a contractual guarantee is ever required, `terraform-plugin-mux` can
 serve both protocol versions.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
-## A-010 — Acceptance tests have not been executed against the live API
+## A-010 — Acceptance tests run against the live API
 
-**Assumption:** Every resource in this provider is unit-verified but **not** API-verified.
+**Status:** resolved. This entry originally recorded that the acceptance tests had been
+written but never executed, because no test account was available.
 
-**Why:** Acceptance tests require a NodePing API token for a dedicated test subaccount,
-which was not available during implementation. The tests are written and compile, but have
-never run against NodePing.
+**Now:** every resource has acceptance tests that create, read, import and destroy real
+objects in a dedicated test account, and they are the gate for any change to a resource.
+The behaviours this entry listed as unverified were confirmed or corrected that way: a
+root-account token accepts `customerid=<own account id>` as a no-op selector, clearing every
+tag needs an empty array (A-029), and the response shapes in A-002 were corrected where
+NodePing differs from its documentation (A-016 onwards).
 
-**Specifically unverified:** that root-account resources tolerate `customerid=<own account
-id>` on every call (assumed to be a no-op account selector); that clearing all tags via an
-empty array works; and every response-shape assumption in A-002.
-
-**Mitigation:** Provision a dedicated test subaccount and run `make test-acc` before
-depending on this provider for production monitoring. This is the gate on a real v1.0.
-
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -256,7 +254,7 @@ because the value the API returns can never equal the value the user wrote.
 the correct shape is a separate single-purpose resource or an ephemeral action, not an
 attribute on the check.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -270,7 +268,7 @@ check's `type`, so the outbound request suppresses them unless the type matches.
 default when the API omits the field — without that symmetry, refresh maps null and every
 subsequent plan shows a permanent diff.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -295,7 +293,7 @@ Per-host conflict rules are enforced by a custom validator rather than
 to state in plaintext and is still never read back, so the original trade-off applies to
 anyone who has not migrated.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -307,7 +305,7 @@ honours it only for PGSQL, MYSQL, and MONGODB.
 **Why:** A per-check-type nested attribute shape is not expressible in a single schema. The
 attribute description and resource documentation state where it takes effect.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-08-27
+**Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
@@ -318,15 +316,15 @@ attribute description and resource documentation state where it takes effect.
 configuration, in exchange for being importable.
 
 **Why:** `tofu plan -generate-config-out` writes `null # sensitive` for every attribute marked
-`Sensitive`. Against a live subaccount of 35 checks and 9 contacts that produced two failures.
-All 9 contacts were unimportable, because `address` is Required and a required attribute set to
-`null` is a configuration error. And 9 checks planned an in-place update that would have deleted
-their live `sendheaders` — silently, since the diff shows `(sensitive value)` on both sides.
+`Sensitive`. Against a live account that produced two failures. Every contact was
+unimportable, because `address` is Required and a required attribute set to `null` is a
+configuration error. And every check with custom headers planned an in-place update that would
+have deleted its live `sendheaders`, silently, since the diff shows `(sensitive value)` on both
+sides.
 
-This is not a hypothetical trade-off. Four checks in the subaccount used for the live run carry
-Cloudflare Access service tokens in `sendheaders`, and the first plan after the change printed
-`CF-Access-Client-Secret` in cleartext and wrote it into `generated.tf`. The decision was taken
-again with that in hand, and stands.
+This is not a hypothetical trade-off. Headers often carry credentials, such as an access-proxy
+service token, and with `Sensitive` removed the first plan prints them in cleartext and
+generated configuration contains them. The decision was taken with that in hand, and stands.
 
 `Sensitive` only redacts CLI output. It never kept the header out of state, and the value is
 visible in the NodePing UI to anyone who can read the check. What it bought was an import path
@@ -335,7 +333,7 @@ credential and the same reasoning applies with less at stake.
 
 `address.headers` and `address.querystrings` are Optional, so a sensitive marking did not make a
 contact unimportable — it made the import lossy instead, planning `(sensitive value) -> null` on
-two live webhook contacts. Same failure, quieter. They are treated the same way for consistency:
+every webhook contact that used them. Same failure, quieter. They are treated the same way for consistency:
 one rule for anything that config generation has to round-trip.
 
 Credential attributes stay sensitive: `password`, `password_wo`, `snmpcom`, `clientcert`,
@@ -401,7 +399,7 @@ subaccount count that appears only on the primary account — so copying the ID 
 reported every subaccount as the primary one. The document carries no check count, so
 `active_checks` reads 0 for this shape.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-21
+**Recorded by:** Atlantic BT · **Date:** 2026-09-21
 
 ---
 
@@ -447,7 +445,7 @@ is fully characterised — `MaintenanceRun` and the non-empty `update.user` form
 from the documentation. No ad-hoc window was created during this work, so the `ad-hoc` group has
 still only been seen empty; its grouping behaviour is taken from the documentation.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -478,7 +476,7 @@ configuration becomes part of `tags` on the next refresh. That is the only readi
 from the API response, and it is the conservative one: it keeps the tag on the check rather
 than silently deleting it.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -511,7 +509,7 @@ has not come up. A target using either is compared only as far as the rules abov
 the provider reports a difference it could have collapsed. That direction is the safe one:
 it shows a diff that settles after one apply instead of hiding a real change.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -529,16 +527,16 @@ ID. The first refresh reads that ID back, and because `customer_id` carries
 resource identity the framework does not even get that far: it aborts the refresh with
 "Unexpected Identity Change", reported as a provider bug.
 
-**Evidence:** reproduced against the test subaccount with the validator removed. The
-post-apply refresh plan failed with the identity going from `customer_id: ""` to
-`customer_id: "20260922144954LK9ZD3"` on the same check ID.
+**Evidence:** reproduced against a test account with the validator removed. The
+post-apply refresh plan failed with the identity going from `customer_id: ""` to the test
+account's real customer ID on the same check ID.
 
 **Rejected alternative:** coercing an empty `customer_id` to the account the API reports.
 That silently rewrites a value the practitioner wrote, on an attribute that forces
 replacement, and it would make `customer_id = ""` mean something different depending on
 which token the provider was configured with.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -554,8 +552,8 @@ identity data.
 and in no state file, so OpenTofu cannot refresh it, cannot destroy it, and will create a
 second one on the next apply. Three `nodeping_schedule` objects and five
 `nodeping_maintenance` objects were deleted by hand during acceptance testing for exactly
-this reason. `nodeping_subaccount` is the sharpest case: the POST creates a billable
-account and two more API calls follow before state is written.
+this reason. `nodeping_subaccount` is the sharpest case: the POST creates a real account,
+and two more API calls follow before state is written.
 
 **Evidence that partial state survives:** terraform-plugin-framework v1.19.0
 (`internal/fwserver/server_createresource.go`) only rejects a null create state when there
@@ -600,7 +598,7 @@ a failure would be a guess at which of several similarly named objects was the n
 is a PUT, so the ID is known whether or not the call succeeded, and it is recorded on any
 failure once the request has been handed to the client.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -627,7 +625,7 @@ was cty.True, but now cty.False`.
 **Rejected alternative:** keeping the planned `true` in state. State would then claim a
 suppression that is not in effect, which is worse than refusing the value.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -659,7 +657,7 @@ currently has addresses; `PUT` with `addresses: null` succeeds and preserves the
 would read a message about account owners, followed by an inconsistent-result error naming
 the provider, for what is simply an operation NodePing does not support.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -683,7 +681,7 @@ assertion.
 and will still diff. NodePing has no way to store an empty name, so there is nothing for the
 provider to make that configuration mean.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
 ---
 
@@ -706,23 +704,24 @@ provider matches addresses by content, so no ID moves — and the next plan is e
 cannot fix this; no ordering derivable from the API response can match an arbitrary
 configuration order.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-22
+**Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
-## A-028 — Every shape found by importing the whole estate is accepted
+## A-028 — Every shape found by importing a large existing account tree is accepted
 
-**Assumption:** the provider accepts each value NodePing returned across all 42 accounts on
-2026-09-30, rather than rejecting data it did not expect.
+**Assumption:** the provider accepts each value NodePing returned when a large production
+account tree, a parent account with dozens of subaccounts and several hundred checks and
+contacts, was imported on 2026-09-30, rather than rejecting data it did not expect.
 
-**Why:** importing the whole estate (543 objects) failed on 114 of them, across eight causes,
-all in the provider:
+**Why:** that import failed on roughly a fifth of the objects, across eight causes, all in the
+provider:
 
 - `queue` is `false` on every disabled check, not a queue name. The field was never used, so
   it is no longer decoded. Disabling a check had made it unreadable.
 - A schedule day with no hours has `time1`/`time2` of `false`. `ScheduleTime` reads `false`
   and `null` as empty.
-- `sens = 0` (one live PUSH check) and `statuscode = 0` (two HTTPADV checks) were refused by
-  validators stricter than NodePing.
-- A type-specific value left on a check after its type changed (`contentstring` on three SSL
+- `sens = 0` (seen on a PUSH check) and `statuscode = 0` (seen on HTTPADV checks) were refused
+  by validators stricter than NodePing.
+- A type-specific value left on a check after its type changed (`contentstring` on SSL
   checks) was an error. It is now a warning. A boolean flag turned on for the wrong type is
   still an error, since no live check has one.
 - `custrole = "owner"` was refused.
@@ -739,7 +738,7 @@ all in the provider:
   when a subaccount is created, `location` is taken from `default_locations` on import, and
   `emailme` is read from the API, which returns it as a boolean.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+**Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
 ## A-029 — An untagged check plans null tags_all, not an empty set
 
@@ -747,11 +746,11 @@ all in the provider:
 already holds none (null), `tags_all` is planned null.
 
 **Why:** NodePing omits the `tags` key on a check that never had one, which Read stores as
-null, and planning `[]` against that was an in-place update on 31 of 35 checks in the first
-estate import. `[]` is still planned when state holds tags, because that is what tells
+null, and planning `[]` against that was an in-place update on nearly every check in an
+account imported for the first time. `[]` is still planned when state holds tags, because that is what tells
 NodePing to clear them.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+**Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
 ## A-030 — Integer zeros are sent to NodePing as strings
 
@@ -763,7 +762,7 @@ string `"0"` when their value is zero, and as JSON numbers otherwise.
 value never settles. The string `"0"` is stored as zero. Found by the 2026-09-30 acceptance
 tests and confirmed with direct API calls against the test subaccount.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+**Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
 ## A-031 — WHOIS and RDAP intervals follow NodePing's minimums
 
@@ -773,7 +772,7 @@ interval below `240` (WHOIS) or `60` (RDAP) is rejected at plan time.
 **Why:** NodePing replaces a shorter interval on these types with `1440` on both create and
 update, so the provider's default of `15` drifted on every plan.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+**Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
 ## A-032 — SPEC10DNS is not a DNS type for attribute rules
 
@@ -783,7 +782,7 @@ applicable to `SPEC10DNS` checks.
 **Why:** NodePing keeps none of them on a SPEC10DNS check, so a configured value never came
 back and always planned a change.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+**Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
 ## A-033 — contactname and email cannot be changed on an existing subaccount
 
@@ -795,4 +794,4 @@ without an API call.
 replacement, and replacing a subaccount deletes every check and contact in it, which is never
 an acceptable way to rename a contact. Supersedes the `requiresReplaceIfWasSet` design.
 
-**Recorded by:** Claude (Atlantic BT) · **Date:** 2026-09-30
+**Recorded by:** Atlantic BT · **Date:** 2026-09-30

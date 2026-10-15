@@ -30,41 +30,29 @@ Ordered by what blocks depending on this provider in production.
 - **Ad-hoc maintenance escape hatch** — `scripts/nodeping-adhoc-maintenance.sh` plus a
   `terraform_data` recipe, deliberately outside provider state.
 - Coverage 11.3% → 95%+. All `govulncheck` findings cleared.
-- Release pipeline on Bitbucket with reproducible builds, secret scanning, a coverage gate,
-  and mirror publishing over OIDC with `h1:` hashes. GPG signing removed — mirrors do not
-  enforce it, so the signature would never have been verified.
+- Release pipeline with reproducible builds, secret scanning and a coverage gate.
 
-## Next — the gate on trusting this in production
+## Done — v1.1.0
 
-**1. Run the acceptance tests.** This is the single most important remaining item.
-Everything in v1.0.0 is unit-verified against a mock; **nothing has run against the live
-NodePing API.** The tests are written and compile. They need a token for a dedicated test
-subaccount — never a client subaccount, never the main account.
+- **Acceptance tests run against the live NodePing API** for every resource, including a
+  table test that creates every supported check type. They found and fixed defects in
+  every resource type; the observed API behaviour is recorded in
+  [assumptions.md](assumptions.md) from A-016 onwards.
+- **Response tolerance lives in the shared client**, so every resource handles
+  `{}`-with-200 and `{"error"}`-with-200 the same way.
+- **Imports of a large existing account tree work without drift**, including disabled
+  checks, owner and login contacts, schedules with days off and subaccounts (A-028).
 
-Specifically unverified, per [assumptions.md](assumptions.md):
-- Root-account resources send `customerid=<own account id>` on every call, assumed to be a
-  no-op account selector (A-010)
-- Clearing all tags via an empty array
-- Every response-shape assumption in A-002 — the `{}`-with-200 and `{"error"}`-with-200
-  handling was inferred from documentation and defensive coding, not observed
+## Next
 
-**2. Hoist NodePing response tolerance into the shared client.** Four workstreams
-independently implemented not-found detection for `{}`-with-HTTP-200 and
-`{"error":...}`-with-HTTP-200. The newer resources have it; `nodeping_check` and
-`nodeping_contact` do not, so they will write an empty object into state where the newer
-ones correctly remove the resource. One implementation, one place to fix it.
-
-**3. Provider mirror.** A hard dependency, not a convenience — goreleaser cannot publish to
-Bitbucket, and private publishing to `registry.opentofu.org` is impossible (public repos
-only). Needs the static index layout (`index.json` + `<version>.json` per the network
-mirror protocol), a generator step in the release pipeline, and Bitbucket OIDC to an AWS
-role so the upload uses no stored access keys. Mirrors require no GPG signing, so the
-signing machinery could be dropped to remove the key-management burden.
+- **Public registry releases.** Tag-triggered CI builds, signed checksums, and publication
+  to the OpenTofu Registry and the Terraform Registry. See [releasing.md](releasing.md).
+- **Generated docs.** The `docs/resources/*` and `docs/data-sources/*` pages are
+  hand-written; `docs_drift_test.go` catches schema drift, but `tfplugindocs` generation
+  would remove the hand-maintenance.
 
 ## Later
 
-- **Generated docs.** The `docs/resources/*` and `docs/data-sources/*` pages are
-  hand-written and drift from the schema. Add `tfplugindocs` and a CI drift check.
 - **Check token regeneration** (A-011) — needs a separate resource or action, not an
   attribute.
 - **Upper bounds for `threshold` and `sens`** — NodePing's documented maxima could not be
@@ -74,7 +62,7 @@ signing machinery could be dropped to remove the key-management burden.
   because NodePing does not return the fields. One unverified idea: creating a subaccount
   also creates a primary contact, so `GET /contacts?customerid=X` may expose them. The
   contact can be edited or deleted independently of the account, so this is a heuristic at
-  best. Investigate once a test subaccount token exists; do not build on it before then.
+  best.
 - **First-class ad-hoc maintenance** (A-003) — blocked on OpenTofu shipping an equivalent
   of Terraform's `action` blocks. They have signalled possible deliberate divergence
   (opentofu#3309), so this may never arrive. The `terraform_data` + provisioner recipe is
@@ -89,7 +77,7 @@ surprise:
   config produces no diff; set it to its zero value instead.
 - **Ad-hoc maintenance is not manageable** (A-003) and is enforced, not just documented.
 - **Subaccount `contactname`/`email` are never refreshed** (A-005) — NodePing does not
-  return them.
+  return them, and changing either on an existing subaccount is refused (A-033).
 - **REDIS host passwords are not drift-detected** (A-013) — the cost of never reading a
   credential back into state.
 - **NodePing stores check passwords in plaintext** (A-001) regardless of what this provider

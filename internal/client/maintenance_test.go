@@ -314,7 +314,7 @@ func TestListMaintenanceStampsIDsFromTheEnvelopeKeys(t *testing.T) {
 	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"customer_id": "20260922144954LK9ZD3",
+			"customer_id": "20210101000000EXAMPL",
 			"schedules": {"MCARA": {"name":"probe","enabled":false,"cron":"0 4 * * 6","duration":90,"checklist":["C1"]}},
 			"ad-hoc": {"MCARB": {"name":"one off","duration":30}}
 		}`))
@@ -531,7 +531,7 @@ func TestGetMaintenanceDecodesTheIDKeyedEnvelope(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"MCARA":{"name":"probe-window","enabled":false,"processing":false,
 			"cron":"0 3 * * 6","duration":60,"history":{},"nextrun":1790391600000,
-			"checklist":["20260922144954LK9ZD3-QG41KK88"],
+			"checklist":["20210101000000EXAMPL-CHK00001"],
 			"update":{"user":"","timestamp":1790091625424},"id":"MCARA"}}`))
 	})
 
@@ -545,7 +545,7 @@ func TestGetMaintenanceDecodesTheIDKeyedEnvelope(t *testing.T) {
 	if got.NextRun == nil || *got.NextRun != 1790391600000 {
 		t.Fatalf("nextrun not decoded: %+v", got.NextRun)
 	}
-	if len(got.Checklist) != 1 || got.Checklist[0] != "20260922144954LK9ZD3-QG41KK88" {
+	if len(got.Checklist) != 1 || got.Checklist[0] != "20210101000000EXAMPL-CHK00001" {
 		t.Fatalf("checklist not decoded: %+v", got.Checklist)
 	}
 }
@@ -652,14 +652,14 @@ func TestCreateMaintenanceDecodesTheIDKeyedEnvelope(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"HDDK2":{"name":"diag-window","cron":"0 3 * * 6","duration":60,
 			"enabled":false,"processing":false,"history":{},"nextrun":1790391600000,
-			"checklist":["20260922144954LK9ZD3-QG41KK88"],
+			"checklist":["20210101000000EXAMPL-CHK00001"],
 			"update":{"user":"","timestamp":1790090708305}},
 			"message":"Maintenance settings were successfully saved.","ok":true}`))
 	})
 
 	got, err := c.CreateMaintenance(context.Background(), MaintenanceCreateRequest{
 		Name: "diag-window", Cron: "0 3 * * 6", Duration: 60,
-		Checklist: []string{"20260922144954LK9ZD3-QG41KK88"},
+		Checklist: []string{"20210101000000EXAMPL-CHK00001"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -802,14 +802,14 @@ func TestUpdateMaintenanceDecodesTheIDKeyedEnvelope(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"MCARA":{"name":"probe-window-updated","enabled":false,
 			"processing":false,"cron":"0 4 * * 6","duration":90,"history":{},
-			"nextrun":1790395200000,"checklist":["20260922144954LK9ZD3-QG41KK88"],
+			"nextrun":1790395200000,"checklist":["20210101000000EXAMPL-CHK00001"],
 			"update":{"user":"","timestamp":1790091625700}},
 			"message":"Maintenance settings were successfully saved.","ok":true}`))
 	})
 
 	got, err := c.UpdateMaintenance(context.Background(), "MCARA", MaintenanceUpdateRequest{
 		Name: "probe-window-updated", Cron: "0 4 * * 6", Duration: 90,
-		Checklist: []string{"20260922144954LK9ZD3-QG41KK88"},
+		Checklist: []string{"20210101000000EXAMPL-CHK00001"},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -14,7 +14,7 @@
 //	TF_ACC_PROVIDER_NAMESPACE=hashicorp \
 //	go test -tags acc ./internal/resources/notificationprofile/...
 //
-// Per CLAUDE.md the tests run against the tofu binary and a dedicated NodePing
+// Per CONTRIBUTING.md the tests run against the tofu binary and a dedicated NodePing
 // test subaccount, never a client subaccount and never the main account.
 package notificationprofile_test
 

@@ -3,9 +3,10 @@
 Manages [NodePing](https://nodeping.com) monitoring as code — checks, contacts, and the
 subaccounts they live in.
 
-Atlantic BT maintains this provider for internal use. It is a fork of
+Developed at [Atlantic BT](https://www.atlanticbt.com) and maintained by Doug Eubanks
+([@RealDougEubanks](https://github.com/RealDougEubanks)). It began as a fork of
 [phizzl/terraform-provider-nodeping](https://github.com/phizzl/terraform-provider-nodeping)
-(MPL-2.0); see [NOTICE.md](NOTICE.md) for provenance and attribution.
+by Phillip Schleicher (MPL-2.0); see [Attribution](#attribution) and [NOTICE.md](NOTICE.md).
 
 > **Targets OpenTofu, not Terraform.** Where the two diverge, OpenTofu wins. Some features
 > this provider relies on — write-only attributes, provider `for_each` — behave differently
@@ -15,10 +16,9 @@ Atlantic BT maintains this provider for internal use. It is a fork of
 
 | | |
 |---|---|
-| Provider address | `atlanticbt.com/abt/nodeping` |
+| Provider address | `atlanticbt/nodeping` |
 | Requires | OpenTofu >= 1.12 |
-| Distribution | ABT private provider mirror (not a public registry) |
-| Test coverage | 94%+ statements |
+| Registries | [OpenTofu Registry](https://search.opentofu.org/provider/atlanticbt/nodeping), Terraform Registry |
 | API coverage | 7 of 7 NodePing CRUD resources |
 
 **Resources:** `nodeping_check` · `nodeping_contact` · `nodeping_contactgroup` ·
@@ -28,45 +28,27 @@ Atlantic BT maintains this provider for internal use. It is a fork of
 **Data sources:** singular and plural forms of each of the above, plus `nodeping_account`
 / `nodeping_accounts`.
 
-> **Not yet verified against the live NodePing API.** Every resource is unit-tested, but
-> acceptance tests have never been executed — that needs a token for a dedicated test
-> subaccount. See [A-010](docs/assumptions.md) for exactly what remains unverified before
-> this should carry production monitoring.
+Every resource is covered by acceptance tests that run against the live NodePing API, and
+the provider has imported and managed a large production NodePing estate without drift.
+Where NodePing's API behaves differently from its documentation, the observed behaviour
+and the provider's handling of it are recorded in [docs/assumptions.md](docs/assumptions.md).
 
 ## Installation
-
-The provider is not published to a public registry. Install it from the ABT mirror by
-adding a `provider_installation` block to `~/.tofurc`:
-
-```hcl
-provider_installation {
-  network_mirror {
-    url     = "https://tofu-mirror.example.abt/"
-    include = ["atlanticbt.com/*/*"]
-  }
-  direct {
-    exclude = ["atlanticbt.com/*/*"]
-  }
-}
-```
-
-The `exclude` on `direct` is required. Without it OpenTofu tries every matching
-installation method and picks the newest across all of them, which means it will still
-reach out to the public registry.
-
-Then declare it as usual:
 
 ```hcl
 terraform {
   required_version = ">= 1.12.0"
   required_providers {
     nodeping = {
-      source  = "atlanticbt.com/abt/nodeping"
-      version = "~> 0.1"
+      source  = "atlanticbt/nodeping"
+      version = "~> 1.1"
     }
   }
 }
 ```
+
+`tofu init` downloads it from the OpenTofu Registry. Releases are built by CI, and their
+checksums are signed.
 
 ## Configuration
 
@@ -82,7 +64,7 @@ provider "nodeping" {
 
 | Argument | Env var | Required | Description |
 |---|---|---|---|
-| `api_token` | `NODEPING_API_TOKEN` | yes | Parent-account API token. Subaccounts have no token of their own. |
+| `api_token` | `NODEPING_API_TOKEN` | yes | NodePing API token. A parent-account token reaches its subaccounts through `customer_id`; a token created for a subaccount reaches only that account. |
 | `customer_id` | `NODEPING_CUSTOMER_ID` | no | Default subaccount for resources that do not set `customer_id`. |
 | `api_url` | `NODEPING_API_URL` | no | Override the API base URL. Testing only. |
 | `default_tags` | — | no | Tags merged into every managed check. |
@@ -119,8 +101,9 @@ resource "nodeping_check" "www" {
 
 ### Subaccounts
 
-Subaccounts have no API token. Everything is the parent token plus a `customer_id`, which
-is settable per resource:
+A parent-account token manages any of its subaccounts through `customer_id`, which is
+settable per resource. (A token created in NodePing for a single subaccount needs no
+`customer_id`; it can only reach that account.)
 
 ```hcl
 resource "nodeping_check" "client_site" {
@@ -227,30 +210,21 @@ Identity is `id` + `customer_id` on every resource except `nodeping_subaccount`,
 ```bash
 make build       # build the binary
 make test        # unit tests with race detector
-make cover       # coverage report
 make lint        # golangci-lint
-make vulncheck   # govulncheck
-make install     # install into the local OpenTofu filesystem mirror
 ```
 
-`make install` writes to `~/.local/share/opentofu/plugins/`. Point `~/.tofurc` at it with a
-`filesystem_mirror` block to test local builds. See
-[docs/development.md](docs/development.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local builds, acceptance tests, conventions and
+the pull request process.
 
 ### Acceptance tests
 
 ```bash
-NODEPING_API_TOKEN=<test-subaccount-token> make test-acc
+NODEPING_API_TOKEN=<token for a test-only account> make test-acc
 ```
 
-These create and destroy live NodePing resources. **Run them against a dedicated test
-subaccount — never a client subaccount and never the main account.**
-
-`make test-acc` sets four environment variables, all of which are required.
-`TF_ACC_TERRAFORM_PATH` alone fails with a misleading "Invalid provider namespace" error,
-because `terraform-plugin-testing` hardcodes `registry.terraform.io` and the legacy `-`
-namespace, which OpenTofu rejects under any other host. Worse, if that variable is unset
-the test harness silently downloads HashiCorp Terraform and tests the wrong binary.
+These create and destroy live NodePing resources. **Run them only against an account that
+holds nothing you care about.** CONTRIBUTING.md lists the fixture variables and the
+environment the harness needs.
 
 ## OpenTofu compatibility
 
@@ -266,12 +240,22 @@ Features this provider depends on that Terraform handles differently or not at a
 Do not add code that branches on `req.TerraformVersion`. OpenTofu 1.12 reports the literal
 string `"1.13.0"` to every provider regardless of its actual version, and does not identify
 itself as OpenTofu. Version gates written against it are silently meaningless. See
-[CLAUDE.md](CLAUDE.md) for the full set of provider conventions.
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full set of provider conventions.
 
 ## Security
 
-Report anything sensitive through the internal ABT security channel, not a repository
-issue. See [NOTICE.md](NOTICE.md) for the security history of this fork.
+Please report vulnerabilities privately, as described in [SECURITY.md](SECURITY.md), not
+in a public issue.
+
+## Attribution
+
+Developed at [Atlantic BT](https://www.atlanticbt.com) and maintained by Doug Eubanks
+([@RealDougEubanks](https://github.com/RealDougEubanks)).
+
+The original provider, including its plugin-framework layout, NodePing API client and
+check and contact resources, was written by Phillip Schleicher as
+[phizzl/terraform-provider-nodeping](https://github.com/phizzl/terraform-provider-nodeping).
+This repository continues from that work under the same license.
 
 ## License
 

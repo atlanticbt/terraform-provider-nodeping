@@ -132,7 +132,7 @@ func TestCustomerIDRejectsTheEmptyString(t *testing.T) {
 		wantError bool
 	}{
 		{"empty", "", true},
-		{"account id", "20260922144954LK9ZD3", false},
+		{"account id", "20210101000000EXAMPL", false},
 	}
 
 	for _, tc := range cases {

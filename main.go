@@ -20,7 +20,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "atlanticbt.com/abt/nodeping",
+		Address: "registry.opentofu.org/atlanticbt/nodeping",
 		Debug:   debug,
 	}
 

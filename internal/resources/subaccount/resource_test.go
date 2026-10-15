@@ -439,7 +439,7 @@ func TestCreateRecordsTheAccountIDWhenTheFollowUpPutFails(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 
-	// The POST created a real, billable account. It must not be left with
+	// The POST created a real account. It must not be left with
 	// nothing in state pointing at it.
 	got := decodeState(t, ctx, resp.State)
 	if got.ID.ValueString() != accountID {

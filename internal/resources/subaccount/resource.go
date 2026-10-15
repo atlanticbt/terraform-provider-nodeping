@@ -87,7 +87,7 @@ func (r *SubaccountResource) Create(ctx context.Context, req resource.CreateRequ
 
 	tflog.Debug(ctx, "Created subaccount", map[string]interface{}{"id": id})
 
-	// A billable account now exists. Everything below can still fail and
+	// A real account now exists. Everything below can still fail and
 	// return, so its ID reaches state before any of it runs.
 	defer recordCreatedID(ctx, resp, id)
 

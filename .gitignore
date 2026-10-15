@@ -24,9 +24,9 @@ tools/**/*.bin
 
 # OpenTofu / Terraform state, plans, and variable files
 #
-# These patterns are deliberately broad. A committed plan file was the source of
-# a third-party data leak in the upstream repository (see NOTICE.md), so state
-# and plan artifacts are excluded by name, by extension, and by directory.
+# These patterns are deliberately broad: state and plan artifacts are excluded by
+# name, by extension and by directory, because a single committed plan file can
+# expose an entire estate.
 #
 # State and plan files contain resource attribute values in cleartext, including
 # any credential a provider wrote to state. Never commit one, and never attach
@@ -84,3 +84,6 @@ coverage.html
 
 # Vendor (if used)
 vendor/
+
+# Local agent instructions; not part of the published repository
+CLAUDE.md

@@ -6,7 +6,7 @@
 terraform {
   required_providers {
     nodeping = {
-      source  = "atlanticbt.com/abt/nodeping"
+      source  = "atlanticbt/nodeping"
       version = "~> 0.2"
     }
   }
