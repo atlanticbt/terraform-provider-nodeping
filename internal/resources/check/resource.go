@@ -1382,8 +1382,8 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 		model.EDNS = types.MapNull(types.StringType)
 	}
 
-	model.Fields = fieldsToMap(ctx, p.Fields, check.ID, diags)
-	model.Hosts = hostsToMap(ctx, p.Hosts, diags)
+	model.Fields = fieldsToMap(p.Fields, check.ID, diags)
+	model.Hosts = hostsToMap(p.Hosts, diags)
 
 	model.Notifications = mapNotifications(check.Notifications)
 }
@@ -1429,7 +1429,7 @@ func dataToMap(ctx context.Context, raw interface{}, diags *diag.Diagnostics) ty
 }
 
 // fieldsToMap renders the "fields" parameter onto the model.
-func fieldsToMap(ctx context.Context, fields map[string]client.CheckField, checkID string, diags *diag.Diagnostics) types.Map {
+func fieldsToMap(fields map[string]client.CheckField, checkID string, diags *diag.Diagnostics) types.Map {
 	if len(fields) == 0 {
 		return types.MapNull(CheckFieldObjectType())
 	}
@@ -1464,7 +1464,7 @@ func fieldsToMap(ctx context.Context, fields map[string]client.CheckField, check
 // password is deliberately left null: NodePing echoes it back in plaintext and
 // persisting it would leak the credential into state. mapForRead restores the
 // value already known from the configuration.
-func hostsToMap(ctx context.Context, hosts map[string]client.RedisHost, diags *diag.Diagnostics) types.Map {
+func hostsToMap(hosts map[string]client.RedisHost, diags *diag.Diagnostics) types.Map {
 	if len(hosts) == 0 {
 		return types.MapNull(RedisHostObjectType())
 	}
