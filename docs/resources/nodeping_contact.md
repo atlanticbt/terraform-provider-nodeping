@@ -93,7 +93,7 @@ resource "nodeping_contact" "critical_only" {
 
 - `name` - (Optional) The name of the contact. Used as a display label. NodePing has no way
   to store an empty name, so `name = ""` behaves as if the attribute were omitted and will
-  show a permanent diff; leave it out instead.
+  show a permanent diff; leave it out instead. At most 1024 characters.
 - `custrole` - (Optional) The permission role for this contact. Valid values: `owner`, `edit`, `view`, `notify`. Defaults to `notify`.
   - `owner` - The account's own login contact. Accepted so owner contacts can be imported.
   - `edit` - Can edit account settings and checks
@@ -116,7 +116,7 @@ The `address` block supports the following arguments:
   - `pagerduty` - PagerDuty integration
   - `hipchat` - HipChat (legacy)
 
-- `address` - (Required) The address value. Format depends on type:
+- `address` - (Required) The address value, 1 to 2048 characters. Format depends on type:
   - Email: `user@example.com`
   - SMS/Voice: `+1-555-123-4567`
   - Webhook: `https://example.com/webhook`
@@ -156,7 +156,7 @@ The `address` block supports the following arguments:
   These frequently carry an authentication token. Configuration generated from an account that
   uses webhook auth therefore contains live credentials: scrub the file before committing it, and
   prefer a variable reference over the literal value. See A-015 in `docs/assumptions.md`.
-- `data` - (Optional) Request body for POST/PUT webhook requests.
+- `data` - (Optional) Request body for POST/PUT webhook requests. At most 65536 characters.
 
 #### Pushover-Specific Arguments
 

@@ -26,6 +26,17 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// Length bounds for free-text attributes. NodePing stores these verbatim at
+// 100,000 characters and enforces no limit of its own, so the bounds are set
+// far above any real value but low enough to stop a pathological one before
+// it is sent.
+const (
+	maxLabelLength         = 1024
+	maxTargetLength        = 2048
+	maxContentStringLength = 16384
+	maxPostDataLength      = 65536
+)
+
 // ValidCheckTypes is the full list of check types supported by the NodePing API.
 var ValidCheckTypes = []string{
 	"AGENT", "AUDIO", "CLUSTER", "DOHDOT", "DNS", "FTP", "HTTP", "HTTPCONTENT",
@@ -503,17 +514,23 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				},
 			},
 			"target": schema.StringAttribute{
-				Description: "The target URL, hostname, or IP address to check.",
+				Description: "The target URL, hostname, or IP address to check. At most 2048 characters.",
 				Optional:    true,
 				Computed:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(maxTargetLength),
+				},
 				PlanModifiers: []planmodifier.String{
 					TargetNormalizationPlanModifier(),
 				},
 			},
 			"label": schema.StringAttribute{
-				Description: "A label for the check. If not provided, the target will be used.",
+				Description: "A label for the check. If not provided, the target will be used. At most 1024 characters.",
 				Optional:    true,
 				Computed:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(maxLabelLength),
+				},
 			},
 			"enabled": schema.BoolAttribute{
 				Description: "Whether the check is enabled.",
@@ -628,8 +645,11 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				},
 			},
 			"contentstring": schema.StringAttribute{
-				Description: "String to match in the response.",
+				Description: "String to match in the response. At most 16384 characters.",
 				Optional:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(maxContentStringLength),
+				},
 			},
 			"regex": schema.BoolAttribute{
 				Description: "Treat contentstring as a regular expression.",
@@ -677,8 +697,11 @@ terraform import nodeping_check.example SUBACCT-1:201205050153W2Q4C-0J2HSIRF
 				ElementType: types.StringType,
 			},
 			"postdata": schema.StringAttribute{
-				Description: "POST data for HTTPADV checks.",
+				Description: "POST data for HTTPADV checks. At most 65536 characters.",
 				Optional:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(maxPostDataLength),
+				},
 			},
 			"port": schema.Int64Attribute{
 				Description: "Port number for the check.",
