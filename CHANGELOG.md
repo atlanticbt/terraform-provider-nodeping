@@ -4,7 +4,7 @@ All notable changes to this provider are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versioning is
 [SemVer](https://semver.org/).
 
-## [1.1.0] — 2026-10-05
+## [1.1.0] - 2026-10-05
 
 Verified against the live NodePing API. Every resource now has acceptance tests, and the
 defects they and a large production import found are fixed. Observed API behaviour is
@@ -37,7 +37,7 @@ recorded in `docs/assumptions.md` (A-016 to A-033).
 - `sendheaders`, contact `address`, `headers` and `querystrings` are no longer sensitive,
   so generated configuration can round-trip them (A-015).
 
-## [1.0.0] — 2026-08-27
+## [1.0.0] - 2026-08-27
 
 First Atlantic BT release. Completes API coverage, keeps credentials out of state, and
 brings test coverage from 11.3% to 95.2%.
@@ -47,23 +47,23 @@ See [NOTICE.md](NOTICE.md) for attribution and provenance.
 
 ### Added
 
-**Five new resources — API coverage goes from 2 of 7 to 7 of 7**
+**Five new resources: API coverage goes from 2 of 7 to 7 of 7**
 
-- `nodeping_contactgroup` — groups of contact addresses for notification routing.
+- `nodeping_contactgroup`: groups of contact addresses for notification routing.
   Members are contact **address** IDs, not contact IDs; a contact has many addresses and it
   is the address that joins a group.
-- `nodeping_schedule` — named notification windows. NodePing has no `POST` for schedules;
+- `nodeping_schedule`: named notification windows. NodePing has no `POST` for schedules;
   `PUT` performs both create and update, and the ID is caller-chosen, so renaming forces
   replacement. Days are modelled as seven optional nested attributes rather than a map, so
   a typo is a plan-time error instead of a silent no-op.
-- `nodeping_notificationprofile` — reusable notification recipient sets. Reuses the check
+- `nodeping_notificationprofile`: reusable notification recipient sets. Reuses the check
   resource's notification reconciliation, so ordering is deterministic and repeated blocks
   for the same contact are not collapsed.
-- `nodeping_maintenance` — scheduled maintenance windows.
-- `nodeping_subaccount` — subaccount provisioning. `POST` creates subaccounts only; the
+- `nodeping_maintenance`: scheduled maintenance windows.
+- `nodeping_subaccount`: subaccount provisioning. `POST` creates subaccounts only; the
   parent account is not manageable as a resource.
 
-**Ten new data sources** — singular and plural forms of each new resource, plus
+**Ten new data sources:** singular and plural forms of each new resource, plus
 `nodeping_account` / `nodeping_accounts`.
 
 **Write-only check credentials**
@@ -72,7 +72,7 @@ See [NOTICE.md](NOTICE.md) for attribution and provenance.
   NodePing but is never written to state or to a saved plan file. Verified against OpenTofu
   1.12.5: schema loads, `req.Config` carries the value, state holds `null`, and the secret
   does not appear in `tofu plan -out`.
-- Read from `req.Config` only — `req.Plan` and `req.State` are always null for write-only
+- Read from `req.Config` only; `req.Plan` and `req.State` are always null for write-only
   attributes.
 - `Read` no longer maps the password NodePing returns into any regular attribute, so the
   API's plaintext cannot leak back into state.
@@ -96,10 +96,10 @@ Plan-time validators for `redistype`, `dohdot`, `volumemin` (−90 to 0), REDIS 
 
 **Acceptance tests** for every resource, including `ImportStateVerify` round trips and a
 test asserting the write-only password is absent from state across create, rotate, and
-import. These compile and are `TF_ACC`-guarded but **have not been run** — see Known
+import. These compile and are `TF_ACC`-guarded but **have not been run**; see Known
 Limitations.
 
-**`docs/assumptions.md`** — fourteen recorded decisions and accepted risks.
+**`docs/assumptions.md`:** fourteen recorded decisions and accepted risks.
 
 **Resource identity** (OpenTofu 1.12)
 
@@ -109,7 +109,7 @@ All seven resources implement `resource.ResourceWithIdentity`, enabling
 which *is* the account. Safe in both directions: a pre-1.12 core never calls the identity
 RPCs, and the string import forms (`ID` and `CUSTOMERID:ID`) continue to work unchanged.
 
-Identity is set in Create, Read, **Update**, and ImportState. Update is not optional — the
+Identity is set in Create, Read, **Update**, and ImportState. Update is not optional: the
 framework raises a hard "Missing Resource Identity After Update" error if the identity is
 fully null after an update, which is reachable for a resource created on a pre-identity
 core and then applied with `-refresh=false`.
@@ -120,7 +120,7 @@ core and then applied with `-refresh=false`.
   API token as HTTP basic auth in cleartext on every request; there was previously no
   guardrail at all. Checked both on the attribute and again in `Configure`, because
   `NODEPING_API_URL` is invisible to attribute validators and the environment variable is
-  where the footgun actually lives. No `allow_insecure_url` escape hatch — a config flag
+  where the footgun actually lives. No `allow_insecure_url` escape hatch: a config flag
   survives copy-paste into production, and an SSH tunnel to `127.0.0.1` covers the
   legitimate cases without leaving a permanent artifact.
 - `rate_limit` must be greater than zero; `max_retries`, `retry_wait_min`, and
@@ -134,8 +134,8 @@ core and then applied with `-refresh=false`.
 
 `hosts[*].password_wo` and `hosts[*].password_wo_version` keep REDIS host passwords out of
 state entirely, resolving what was previously an accepted drift-detection gap. `WriteOnly`
-inside a `MapNestedAttribute` is supported in terraform-plugin-framework v1.19.0 — verified
-in the framework source, not assumed — but only when the containing map attribute is not
+inside a `MapNestedAttribute` is supported in terraform-plugin-framework v1.19.0 (verified
+in the framework source, not assumed), but only when the containing map attribute is not
 `Computed`, so this depended on the `hosts` demotion below. `hosts[*].password` remains for
 migration and is deprecated.
 
@@ -151,15 +151,15 @@ prose they carry; migrating with templates that preserve it is tracked in the ro
 
 `scripts/nodeping-adhoc-maintenance.sh` performs the API call imperatively, driven from a
 `terraform_data` resource with a `local-exec` provisioner (recipe in the maintenance
-resource docs). Deliberately outside provider state, which is what makes it safe — OpenTofu
+resource docs). Deliberately outside provider state, which is what makes it safe. OpenTofu
 never tries to reconcile the window, so the recreate loop that makes ad-hoc unmanageable
 cannot occur. The script validates and bounds every input, rejects check IDs containing
 anything but alphanumerics and hyphens rather than escaping them, requires an `https`
 endpoint outside loopback, and reads the token from the environment so it never reaches
 `ps` output.
 
-**Release tooling** for publishing builds to a private provider mirror. It was replaced in
-1.1.x by tag-triggered CI releases to the public registries.
+**Release tooling** for publishing builds. It was replaced in 1.1.x by tag-triggered CI
+releases to the public registries.
 
 ### Changed
 
@@ -170,9 +170,8 @@ endpoint outside loopback, and reads the token from the environment so it never 
 - `CheckCreateRequest.Tags` is now `*[]string`. A plain slice with `omitempty` dropped an
   empty array, making "remove the last tag" a silent no-op.
 - `terraform-plugin-testing` v1.16.0 added as a real dependency.
-- **GPG signing removed from the release pipeline** while releases went only to a
-  private mirror, which does not verify signatures. Registry releases sign their checksums
-  again.
+- **GPG signing temporarily disabled in the release pipeline.** Registry releases sign
+  their checksums again.
 
 - **Attribute removal now produces a diff for 24 check attributes.** `Optional + Computed`
   was over-applied. It is only required where NodePing supplies a value the practitioner
@@ -182,7 +181,7 @@ endpoint outside loopback, and reads the token from the environment so it never 
   `namespace`, `whoisserver`, `rdapurl`, `ignore`, `servername`, `sshkey`, `clientcert`,
   `sentinelname`, `dnstoresolve`, `dep`, and the deprecated `password`. Attributes with
   documented server defaults, schema defaults, or unconditional API responses keep
-  `Computed` — a wrong demotion is a hard apply failure on every apply, so uncertainty
+  `Computed`: a wrong demotion is a hard apply failure on every apply, so uncertainty
   resolved in favour of keeping it. See A-007 for the kept-with-reason list.
 
 ### Fixed
@@ -190,7 +189,7 @@ endpoint outside loopback, and reads the token from the environment so it never 
 - **A 200 response carrying `{"error": ...}` could delete a resource from state and
   recreate live infrastructure.** NodePing returns errors with HTTP 200 on some endpoints.
   `nodeping_contactgroup`, `nodeping_notificationprofile`, `nodeping_maintenance`, and
-  `nodeping_subaccount` checked only whether the decoded document was empty — and an error
+  `nodeping_subaccount` checked only whether the decoded document was empty, and an error
   document decodes to an empty struct. A transient `permission denied` or `rate limit
   exceeded` was therefore reported as "resource absent", so OpenTofu would drop it from
   state and rebuild it on the next apply. Not-found classification is now conservative: a
@@ -204,8 +203,8 @@ endpoint outside loopback, and reads the token from the environment so it never 
 - **`ListChecks` and the other list methods turned a 200-carried error into an empty
   collection**, which is indistinguishable from an empty account. They now return the error.
 - **Provider configuration rejected valid tokens sourced from another resource.**
-  `Configure` checked only `IsNull()`, so an attribute whose value was not yet known —
-  `api_token` wired from another resource's output, for example — was read as an empty
+  `Configure` checked only `IsNull()`, so an attribute whose value was not yet known
+  (`api_token` wired from another resource's output, for example) was read as an empty
   string. The practitioner got "Missing NodePing API Token", and a perfectly good
   `NODEPING_API_TOKEN` in the environment was silently discarded in the process. Unknown
   values now produce the framework-recommended "apply the source first" diagnostic for
@@ -227,7 +226,7 @@ endpoint outside loopback, and reads the token from the environment so it never 
 ### Known limitations
 
 - **Nothing in this release has been verified against the live NodePing API.** Acceptance
-  tests exist for every resource but have never run — that requires a token for a dedicated
+  tests exist for every resource but have never run; that requires a token for a dedicated
   test subaccount. This is the gate on production use, and it is the most significant item
   on this list by a wide margin. See A-010.
 - **Ad-hoc maintenance cannot be a resource.** NodePing auto-deletes the record after the
@@ -236,12 +235,12 @@ endpoint outside loopback, and reads the token from the environment so it never 
   `terraform_data` and `scripts/nodeping-adhoc-maintenance.sh`. Not expected to change:
   the declarative answer would be Terraform's `action` blocks, which OpenTofu has signalled
   it may deliberately not adopt. See A-003.
-- **Some attributes still do not diff on removal.** Narrowed substantially this release —
+- **Some attributes still do not diff on removal.** Narrowed substantially this release:
   24 check attributes were demoted to plain `Optional` and now behave correctly. What
   remains is attributes where NodePing supplies a value the practitioner never set; for
   those, set the zero value explicitly rather than deleting the line. See A-007 for the
   list and the reason each was kept.
-- **Subaccount `contactname` and `email` are never refreshed** — NodePing does not return
+- **Subaccount `contactname` and `email` are never refreshed**: NodePing does not return
   them, so drift in those fields is invisible. See A-005.
 - **`checktoken` regeneration is unsupported.** NodePing's documentation is
   self-contradictory on this attribute; the correct shape is a separate resource, not an
@@ -249,7 +248,7 @@ endpoint outside loopback, and reads the token from the environment so it never 
 
 ---
 
-## [0.1.0] — 2026-08-27
+## [0.1.0] - 2026-08-27
 
 Initial Atlantic BT fork. Correctness, security, and build fixes carried over from the
 upstream audit; no new resources. See the initial commit message for detail.

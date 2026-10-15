@@ -6,7 +6,7 @@ live API, it was reproduced with direct calls to NodePing, not inferred from doc
 
 ---
 
-## A-001 — NodePing stores check credentials in plaintext on their side
+## A-001: NodePing stores check credentials in plaintext on their side
 
 **Assumption:** Credentials on authenticated checks (`FTP`, `IMAP4`, `MYSQL`, `POP3`,
 `SMTP`, `SSH`) are stored and returned in cleartext by NodePing, and nothing this provider
@@ -15,7 +15,7 @@ does can change that.
 **Why:** Their API requires the plaintext to authenticate against the monitored target, and
 their own documentation advises least-privilege credentials for exactly this reason.
 
-**Mitigation, in force:** `password_wo` is a write-only attribute — verified on OpenTofu
+**Mitigation, in force:** `password_wo` is a write-only attribute, verified on OpenTofu
 1.12.5 to keep the value out of both state and saved plan files. Pair it with an
 `ephemeral` block when sourcing from a secret store; a regular `data` source would persist
 the secret in state even though the check attribute does not. REDIS `hosts[*].password`
@@ -23,7 +23,7 @@ gets the same treatment (see A-013).
 
 **Residual risk:** the deprecated `password` attribute still writes to state in plaintext
 and is retained only for migration. `Sensitive: true` redacts CLI output and does **not**
-protect state — it is not a mitigation on its own. Consumers should enable OpenTofu state
+protect state, so it is not a mitigation on its own. Consumers should enable OpenTofu state
 encryption regardless, and must use monitoring-only credentials with minimum privilege,
 because NodePing's own storage remains cleartext.
 
@@ -31,7 +31,7 @@ because NodePing's own storage remains cleartext.
 
 ---
 
-## A-002 — NodePing violates HTTP conventions; the client compensates
+## A-002: NodePing violates HTTP conventions; the client compensates
 
 **Assumption:** API responses cannot be trusted to follow REST conventions, so the client
 layer normalises them.
@@ -63,7 +63,7 @@ Concretely, in `internal/client`:
 
 **Accepted risk, deliberately conservative:** message matching is restricted to a short
 fragment list and is skipped for retryable statuses (429 and 5xx). A transient upstream
-failure whose text happens to contain "not found" must stay a real error — classifying it
+failure whose text happens to contain "not found" must stay a real error. Classifying it
 as absence would make OpenTofu drop the resource from state and recreate live
 infrastructure on the next apply. The cost of the narrow list is that an unrecognised
 absence phrasing surfaces as an ordinary error, which is the safe direction to fail.
@@ -72,19 +72,19 @@ absence phrasing surfaces as an ordinary error, which is the safe direction to f
 
 ---
 
-## A-003 — Ad-hoc maintenance is not manageable as a resource
+## A-003: Ad-hoc maintenance is not manageable as a resource
 
 **Assumption:** `nodeping_maintenance` supports scheduled (cron) windows only. Ad-hoc
 windows cannot be created or imported.
 
 **Why:** NodePing auto-deletes ad-hoc maintenance records once the run completes. A
 declarative resource would see the record vanish, remove it from state, and recreate it on
-the next plan — an infinite loop that repeatedly disables the customer's monitoring. There
+the next plan: an infinite loop that repeatedly disables the customer's monitoring. There
 is no honest way to express "gone is expected and terminal" in the plugin framework: the
 resource would sit in state describing an object that does not exist, and later edits to
 `duration` or `checklist` would silently do nothing.
 
-**Mitigation:** Enforced structurally rather than documented — `cron` is Required, the
+**Mitigation:** Enforced structurally rather than documented: `cron` is Required, the
 create request cannot express `id: "ad-hoc"`, import rejects the ad-hoc ID before any API
 call, and update refuses an ad-hoc ID. Ad-hoc windows remain visible through both data
 sources, and the plural one exposes an `ad_hoc` boolean.
@@ -92,7 +92,7 @@ sources, and the plural one exposes an `ad_hoc` boolean.
 **Escape hatch:** `scripts/nodeping-adhoc-maintenance.sh` performs the API call
 imperatively, intended to be driven from a `terraform_data` resource with a `local-exec`
 provisioner (recipe in `docs/resources/nodeping_maintenance.md`). This is deliberately
-outside provider state, which is what makes it safe — OpenTofu never tries to reconcile
+outside provider state, which is what makes it safe. OpenTofu never tries to reconcile
 the window, so it cannot loop. The script validates and bounds every input, rejects check
 IDs containing anything but alphanumerics and hyphens rather than escaping them, requires
 an `https` endpoint outside loopback, and reads the token from the environment so it never
@@ -107,7 +107,7 @@ the workaround with a first-class resource.
 
 ---
 
-## A-004 — `accountsuppressall` is not exposed
+## A-004: `accountsuppressall` is not exposed
 
 **Assumption:** The account-wide notification suppression flag is omitted from
 `nodeping_subaccount`.
@@ -121,7 +121,7 @@ guarantee. It is an incident-response switch, not configuration.
 
 ---
 
-## A-005 — Subaccount POST-only fields are tracked from configuration only
+## A-005: Subaccount POST-only fields are tracked from configuration only
 
 **Assumption:** `contactname`, `email`, `emailme`, `autodiagnotifications`, and `location`
 are never mapped from API responses.
@@ -139,7 +139,7 @@ them.
 
 ---
 
-## A-006 — `lam` is accepted for subaccount `location` despite the docs omitting it
+## A-006: `lam` is accepted for subaccount `location` despite the docs omitting it
 
 **Assumption:** The Latin America region code is valid on subaccount creation.
 
@@ -151,15 +151,15 @@ documentation bug rather than a real constraint. Rejecting it would block valid 
 
 ---
 
-## A-007 — Optional + Computed suppresses attribute-removal diffs, where it is genuinely needed
+## A-007: Optional + Computed suppresses attribute-removal diffs, where it is genuinely needed
 
 **Assumption:** `Optional + Computed` is used only where NodePing supplies a value the
-practitioner never set — a documented server-side default, a schema `Default`, or a field
+practitioner never set: a documented server-side default, a schema `Default`, or a field
 the API returns unconditionally. Those attributes do not diff when removed from
 configuration.
 
 **Why:** The framework substitutes prior state when config goes null on an Optional +
-Computed attribute. The alternative for a server-defaulted field — Optional-only — turns
+Computed attribute. The alternative for a server-defaulted field (Optional-only) turns
 every server-side normalisation into a hard "inconsistent result after apply" on *every*
 apply, which is strictly worse than a suppressed removal diff.
 
@@ -193,7 +193,7 @@ plain `Optional`, covered by the removal test table like the other twenty-four.
 
 ---
 
-## A-008 — Cross-field validation is lenient where NodePing's docs contradict themselves
+## A-008: Cross-field validation is lenient where NodePing's docs contradict themselves
 
 **Assumption:** Some type-specific fields are permitted on more check types than the field
 table implies.
@@ -207,7 +207,7 @@ configurations, which is a worse failure than a permissive one that surfaces at 
 
 ---
 
-## A-009 — Protocol 6 support in OpenTofu is observed, not contractually promised
+## A-009: Protocol 6 support in OpenTofu is observed, not contractually promised
 
 **Assumption:** Shipping a protocol-6 provider against OpenTofu is safe.
 
@@ -223,7 +223,7 @@ serve both protocol versions.
 
 ---
 
-## A-010 — Acceptance tests run against the live API
+## A-010: Acceptance tests run against the live API
 
 **Status:** resolved. This entry originally recorded that the acceptance tests had been
 written but never executed, because no test account was available.
@@ -239,12 +239,12 @@ NodePing differs from its documentation (A-016 onwards).
 
 ---
 
-## A-011 — `checktoken` is read-only; token regeneration is not supported
+## A-011: `checktoken` is read-only; token regeneration is not supported
 
 **Assumption:** The AGENT/PUSH check token is exposed as a Computed, Sensitive attribute
 and cannot be regenerated through the provider.
 
-**Why:** NodePing's documentation is self-contradictory — it describes `checktoken` as
+**Why:** NodePing's documentation is self-contradictory. It describes `checktoken` as
 read-only while also saying you set it to the literal string `"reset"` to request
 regeneration. Modelling that as Optional + Computed produces either a permanent diff
 (config `"reset"` vs the real token in state) or an inconsistent-result-after-apply error,
@@ -258,21 +258,21 @@ attribute on the check.
 
 ---
 
-## A-012 — Type-specific defaults are gated on check type before being sent
+## A-012: Type-specific defaults are gated on check type before being sent
 
 **Assumption:** `redistype` and `dohdot` carry schema defaults that apply regardless of the
 check's `type`, so the outbound request suppresses them unless the type matches.
 
 **Why:** Framework defaults are unconditional. Without gating, an HTTP check would plan
 `redistype = "standalone"` and send it to the API. The mapping function applies the same
-default when the API omits the field — without that symmetry, refresh maps null and every
+default when the API omits the field. Without that symmetry, refresh maps null and every
 subsequent plan shows a permanent diff.
 
 **Recorded by:** Atlantic BT · **Date:** 2026-08-27
 
 ---
 
-## A-013 — RESOLVED: REDIS host credentials are write-only
+## A-013: RESOLVED: REDIS host credentials are write-only
 
 **Status:** resolved, not accepted. Superseded by `hosts[*].password_wo`.
 
@@ -281,8 +281,8 @@ so a host password changed outside OpenTofu was not detected as drift.
 
 **Resolution:** `hosts[*].password_wo` and `hosts[*].password_wo_version` keep the
 credential out of state entirely, so there is nothing to drift. `WriteOnly` inside a
-`MapNestedAttribute` is supported in terraform-plugin-framework v1.19.0 — verified in the
-framework source (`map_nested_attribute.go:317-323`), not assumed — **provided the
+`MapNestedAttribute` is supported in terraform-plugin-framework v1.19.0 (verified in the
+framework source, `map_nested_attribute.go:317-323`, not assumed), **provided the
 containing map attribute is not `Computed`**. Demoting `hosts` to plain `Optional` under
 A-007 is what made this legal; the two changes are coupled.
 
@@ -297,7 +297,7 @@ anyone who has not migrated.
 
 ---
 
-## A-014 — `fields.match` is exposed on all field entries
+## A-014: `fields.match` is exposed on all field entries
 
 **Assumption:** The `match` sub-attribute appears on every `fields` entry, though NodePing
 honours it only for PGSQL, MYSQL, and MONGODB.
@@ -309,7 +309,7 @@ attribute description and resource documentation state where it takes effect.
 
 ---
 
-## A-015 — Header, query-string and address values are not marked sensitive
+## A-015: Header, query-string and address values are not marked sensitive
 
 **Assumption:** `nodeping_check.sendheaders`, `nodeping_contact.address.address`,
 `address.headers` and `address.querystrings` are readable in plan output and in generated
@@ -332,7 +332,7 @@ that deletes production configuration on apply. A contact address is PII rather 
 credential and the same reasoning applies with less at stake.
 
 `address.headers` and `address.querystrings` are Optional, so a sensitive marking did not make a
-contact unimportable — it made the import lossy instead, planning `(sensitive value) -> null` on
+contact unimportable; it made the import lossy instead, planning `(sensitive value) -> null` on
 every webhook contact that used them. Same failure, quieter. They are treated the same way for consistency:
 one rule for anything that config generation has to round-trip.
 
@@ -340,7 +340,7 @@ Credential attributes stay sensitive: `password`, `password_wo`, `snmpcom`, `cli
 `sshkey`. They are write-only or Computed, so generation never has to reproduce them.
 
 **Operational consequence:** a file written by `tofu plan -generate-config-out` against an
-account using header authentication contains live credentials. Treat it as secret-bearing —
+account using header authentication contains live credentials. Treat it as secret-bearing:
 scrub it before it goes near version control, and prefer a variable reference over the literal
 when folding it into a root module.
 
@@ -348,7 +348,7 @@ when folding it into a root module.
 
 ---
 
-## A-016 — `warningdays` has no lower bound
+## A-016: `warningdays` has no lower bound
 
 **Assumption:** The provider enforces no minimum on `warningdays`.
 
@@ -362,18 +362,18 @@ would repeat the mistake.
 
 ---
 
-## A-017 — Type-applicability validation ignores boolean flags set to false
+## A-017: Type-applicability validation ignores boolean flags set to false
 
 **Assumption:** `regex`, `invert` and `dnsrd` are rejected on a check type that does not support
 them only when set to `true`.
 
 **Why:** NodePing returns these flags as `false` on check types that do not use them. Across 35
-live checks, `invert` was present and `false` on 19 of them — PUSH as well as HTTPADV and
-HTTPCONTENT — and `ipv6` was present and `false` on PING and PUSH checks. Presence is not
+live checks, `invert` was present and `false` on 19 of them (PUSH as well as HTTPADV and
+HTTPCONTENT), and `ipv6` was present and `false` on PING and PUSH checks. Presence is not
 uniform: 6 of the 7 PUSH checks omitted `invert` entirely and one carried `false`, which is the
 one that failed. The read path maps what the API sends, so that refreshed PUSH check carried
 `invert = false` and the provider's own validator then rejected its own output. `dnsrd` is
-covered by the same rule by analogy; no live check in the survey carried it. Skipping false keeps the guardrail where it is useful — a flag someone
+covered by the same rule by analogy; no live check in the survey carried it. Skipping false keeps the guardrail where it is useful: a flag someone
 turned on for a check type that ignores it is still a mistake worth reporting.
 
 The read path was left alone. Nulling out type-inapplicable attributes would have meant changing
@@ -384,7 +384,7 @@ inconsistent-result-after-apply failure on every apply (see A-007, A-012).
 
 ---
 
-## A-018 — `GET /accounts` returns one document, not a listing, when scoped to a customer
+## A-018: `GET /accounts` returns one document, not a listing, when scoped to a customer
 
 **Assumption:** When the request carries `customerid`, NodePing answers `GET /accounts` with
 that single account document, and `ListAccounts` converts it into a one-entry listing keyed by
@@ -394,8 +394,8 @@ its `_id`. The document's `parent` is dropped rather than mapped.
 every request whenever the provider is configured with one, which is the normal way to manage a
 subaccount, so `nodeping_accounts` failed to decode on every read in that configuration. The
 document names the account `customer_name` where the listing uses `name`, and its `parent` holds
-the parent account's ID as a string. `AccountSummary.Parent` means something else entirely — the
-subaccount count that appears only on the primary account — so copying the ID across would have
+the parent account's ID as a string. `AccountSummary.Parent` means something else entirely (the
+subaccount count that appears only on the primary account), so copying the ID across would have
 reported every subaccount as the primary one. The document carries no check count, so
 `active_checks` reads 0 for this shape.
 
@@ -403,7 +403,7 @@ reported every subaccount as the primary one. The document carries no check coun
 
 ---
 
-## A-019 — Every maintenance response keys the windows by ID, and the key is the only identifier
+## A-019: Every maintenance response keys the windows by ID, and the key is the only identifier
 
 **Assumption:** Four maintenance shapes exist and one decoder recognises all of them:
 
@@ -441,7 +441,7 @@ create and update responses do not, which is why the key has to be trusted. The 
 that no reachable account had a window no longer applies.
 
 **Residual:** `history` was `{}` and `update.user` was `""` on every window observed, so neither
-is fully characterised — `MaintenanceRun` and the non-empty `update.user` form remain inferred
+is fully characterised: `MaintenanceRun` and the non-empty `update.user` form remain inferred
 from the documentation. No ad-hoc window was created during this work, so the `ad-hoc` group has
 still only been seen empty; its grouping behaviour is taken from the documentation.
 
@@ -449,7 +449,7 @@ still only been seen empty; its grouping behaviour is taken from the documentati
 
 ---
 
-## A-020 — `default_tags` is merged into a computed `tags_all`, not into `tags`
+## A-020: `default_tags` is merged into a computed `tags_all`, not into `tags`
 
 **Assumption:** `nodeping_check.tags` holds only what the configuration declares and always
 matches it exactly. The provider's `default_tags` are merged into a new computed
@@ -458,7 +458,7 @@ matches it exactly. The provider's `default_tags` are merged into a new computed
 **Why:** The first live acceptance run failed with "Provider produced invalid plan: planned
 value [managed-by-tofu, team-devops, tf-acc] does not match config value [team-devops]".
 Terraform requires the planned value of an attribute to equal a known configuration value,
-so `ModifyPlan` could not write a merged set into `tags` — the feature broke for any check
+so `ModifyPlan` could not write a merged set into `tags`, so the feature broke for any check
 that declared tags of its own, which is the normal case. Moving the merge into `Read` only
 converts the invalid plan into an inconsistent-result-after-apply, the same rule one step
 later. The `tags` / `tags_all` split is what the AWS provider does for this exact problem,
@@ -467,7 +467,7 @@ and it is a user-visible schema change rather than a fix behind the scenes.
 **Consequence for reads:** NodePing only stores the merged set, so `Read` takes `tags_all`
 from the API and derives `tags` by removing the configured `default_tags`. A tag the
 practitioner declared that is also a default is kept in `tags`, decided by consulting prior
-state — subtracting the defaults blindly would drop it and plan its removal on every run.
+state. Subtracting the defaults blindly would drop it and plan its removal on every run.
 Import has no prior state and removes the defaults unconditionally.
 
 **Accepted limitation:** because the derivation depends on the *current* `default_tags`, a
@@ -480,7 +480,7 @@ than silently deleting it.
 
 ---
 
-## A-021 — Target equality follows the normalisation NodePing was observed to perform
+## A-021: Target equality follows the normalisation NodePing was observed to perform
 
 **Assumption:** `normalizeTarget` reproduces only the rewriting confirmed against the live
 API, per check type. Every type has surrounding whitespace trimmed. For `HTTP`, `HTTPADV`,
@@ -494,7 +494,7 @@ kept), duplicate slashes, dot segments, userinfo, query and fragment.
 trailing slash from any target, which was both too loose and too broad: it treated
 `https://example.com/path/` and `https://example.com/path` as the same target when NodePing
 keeps them distinct, and it applied to check types the API does not normalise at all. Both
-directions are bugs — one hides a real change, the other reports one that does not exist.
+directions are bugs: one hides a real change, the other reports one that does not exist.
 
 **Evidence:** every type in `ValidCheckTypes` was submitted to the live API in the test
 subaccount and the stored target read back. `WEBSOCKET`, `FTP`, `RDAP`, `SIP` and `WHOIS`
@@ -513,7 +513,7 @@ it shows a diff that settles after one apply instead of hiding a real change.
 
 ---
 
-## A-022 — An empty `customer_id` is rejected rather than treated as "no subaccount"
+## A-022: An empty `customer_id` is rejected rather than treated as "no subaccount"
 
 **Assumption:** `customer_id = ""` is a configuration error. The attribute carries
 `stringvalidator.LengthAtLeast(1)`; a practitioner who wants the token's own account omits
@@ -540,14 +540,14 @@ which token the provider was configured with.
 
 ---
 
-## A-023 — A Create that fails after the API call records the identifier before returning the error
+## A-023: A Create that fails after the API call records the identifier before returning the error
 
 **Assumption:** when NodePing has already created an object and the provider is about to
 return an error from `Create`, the provider writes the object's identifier into state and
 still returns the error. It does not write the planned values, and it does not write
 identity data.
 
-**Why:** every `Create` has the same shape — call the API, do some more work, then
+**Why:** every `Create` has the same shape: call the API, do some more work, then
 `resp.State.Set`. Anything that returns in between leaves an object that exists in NodePing
 and in no state file, so OpenTofu cannot refresh it, cannot destroy it, and will create a
 second one on the next apply. Three `nodeping_schedule` objects and five
@@ -559,8 +559,8 @@ and two more API calls follow before state is written.
 (`internal/fwserver/server_createresource.go`) only rejects a null create state when there
 are no error diagnostics, and it skips its identity checks on the error path entirely.
 OpenTofu's apply (`internal/tofu/node_resource_abstract_instance.go`) saves whatever
-non-null object the provider returned when apply reported errors — the
-`diags.HasErrors() && !newVal.IsNull()` branch — and skips `AssertObjectCompatible` in the
+non-null object the provider returned when apply reported errors (the
+`diags.HasErrors() && !newVal.IsNull()` branch) and skips `AssertObjectCompatible` in the
 same situation, so required attributes left null are accepted. The unit tests in
 `check`, `schedule` and `subaccount` assert the identifier is in `resp.State` after a
 forced post-create failure.
@@ -587,7 +587,7 @@ cannot produce a diagnostic for any response the client will return. Adding the 
 would be code that can never run. If a step that can fail is ever added to one of those
 `Create` methods, it needs the same treatment.
 
-**Limitation — the identifier is not always knowable.** When the create call itself returns
+**Limitation: the identifier is not always knowable.** When the create call itself returns
 an error, the provider has no ID: for `check`, `contact`, `contactgroup`, `maintenance`,
 `notificationprofile` and `subaccount` the ID exists only in the response body, so a request
 that reached NodePing and was applied but whose response was lost or could not be decoded
@@ -602,15 +602,15 @@ failure once the request has been handed to the client.
 
 ---
 
-## A-024 — `suppress_diag` accepts only `false`, because NodePing discards it
+## A-024: `suppress_diag` accepts only `false`, because NodePing discards it
 
 **Assumption:** `suppress_diag = true` on a `nodeping_contact` address is a configuration
 error. The attribute remains in the schema and `false` is accepted, so existing
 configurations and state are unaffected.
 
 **Why:** NodePing accepts `suppressdiag` in a contact address payload, stores nothing, and
-never returns it. Every sibling flag — `suppressup`, `suppressdown`, `suppressfirst`,
-`suppressall` — round trips. The provider therefore planned `true` and read back `false`,
+never returns it. Every sibling flag (`suppressup`, `suppressdown`, `suppressfirst`,
+`suppressall`) round trips. The provider therefore planned `true` and read back `false`,
 and OpenTofu aborted the apply with "Provider produced inconsistent result after apply …
 This is a bug in the provider", which points the practitioner at the provider for a
 limitation of the upstream API.
@@ -629,7 +629,7 @@ suppression that is not in effect, which is worse than refusing the value.
 
 ---
 
-## A-025 — The contact `addresses` map is sent on every update, and a contact may not lose its last address
+## A-025: The contact `addresses` map is sent on every update, and a contact may not lose its last address
 
 **Assumption:** `ContactUpdateRequest.Addresses` carries no `omitempty`. An update that
 keeps no existing address sends `"addresses": {}`; an update to a contact that has no
@@ -637,8 +637,8 @@ addresses and gains none sends `"addresses": null`. Reducing a contact to zero a
 refused by the provider before the request is made.
 
 **Why:** NodePing treats `addresses` as the complete set and deletes anything missing from
-it. With `omitempty`, an update whose planned addresses were all new — replacing a contact's
-only email with an SMS, where nothing matches by content, ID or position — dropped the map
+it. With `omitempty`, an update whose planned addresses were all new (replacing a contact's
+only email with an SMS, where nothing matches by content, ID or position) dropped the map
 from the request, so NodePing added the new address and kept the old one. The apply failed
 with "block count changed from 1 to 2" and the contact was left with an address the
 configuration had removed.
@@ -661,7 +661,7 @@ the provider, for what is simply an operation NodePing does not support.
 
 ---
 
-## A-026 — A contact with no name is null in state, not an empty string
+## A-026: A contact with no name is null in state, not an empty string
 
 **Assumption:** `Read` and `ImportState` map an absent or empty NodePing contact name to
 `types.StringNull()`.
@@ -685,7 +685,7 @@ provider to make that configuration mean.
 
 ---
 
-## A-027 — An imported contact's address order is not the configuration's
+## A-027: An imported contact's address order is not the configuration's
 
 **Assumption:** the acceptance tests verify an imported contact's `address` blocks with
 `ImportStateCheck` against the set of blocks apply wrote, and exclude `address` from
@@ -694,19 +694,19 @@ provider to make that configuration mean.
 **Why:** NodePing returns addresses as a map keyed by a server-assigned ID. With no plan to
 follow, `mapAddressesToModel` orders them by that ID, which is random per address, while an
 apply orders them as the configuration does. `ImportStateVerify` compares by list position,
-so it would pass or fail on which IDs NodePing happened to issue — a flaky test rather than
+so it would pass or fail on which IDs NodePing happened to issue: a flaky test rather than
 a real signal. The set comparison asserts the stronger property anyway: every block,
 including its server-assigned ID, comes back from the API unchanged.
 
 **Consequence for practitioners:** the first plan after importing a contact with more than
-one address may show the blocks being reordered. The apply is a no-op at the API — the
-provider matches addresses by content, so no ID moves — and the next plan is empty. Sorting
+one address may show the blocks being reordered. The apply is a no-op at the API (the
+provider matches addresses by content, so no ID moves), and the next plan is empty. Sorting
 cannot fix this; no ordering derivable from the API response can match an arbitrary
 configuration order.
 
 **Recorded by:** Atlantic BT · **Date:** 2026-09-22
 
-## A-028 — Every shape found by importing a large existing account tree is accepted
+## A-028: Every shape found by importing a large existing account tree is accepted
 
 **Assumption:** the provider accepts each value NodePing returned when a large production
 account tree, a parent account with dozens of subaccounts and several hundred checks and
@@ -740,7 +740,7 @@ provider:
 
 **Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
-## A-029 — An untagged check plans null tags_all, not an empty set
+## A-029: An untagged check plans null tags_all, not an empty set
 
 **Assumption:** when the configuration and provider defaults give a check no tags and state
 already holds none (null), `tags_all` is planned null.
@@ -752,7 +752,7 @@ NodePing to clear them.
 
 **Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
-## A-030 — Integer zeros are sent to NodePing as strings
+## A-030: Integer zeros are sent to NodePing as strings
 
 **Assumption:** `sens`, `statuscode`, `warningdays`, `volumemin` and `port` are sent as the
 string `"0"` when their value is zero, and as JSON numbers otherwise.
@@ -764,7 +764,7 @@ tests and confirmed with direct API calls against the test subaccount.
 
 **Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
-## A-031 — WHOIS and RDAP intervals follow NodePing's minimums
+## A-031: WHOIS and RDAP intervals follow NodePing's minimums
 
 **Assumption:** an unset `interval` plans `1440` for `WHOIS` and `RDAP` checks, and an explicit
 interval below `240` (WHOIS) or `60` (RDAP) is rejected at plan time.
@@ -774,7 +774,7 @@ update, so the provider's default of `15` drifted on every plan.
 
 **Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
-## A-032 — SPEC10DNS is not a DNS type for attribute rules
+## A-032: SPEC10DNS is not a DNS type for attribute rules
 
 **Assumption:** `dnstype`, `dnstoresolve`, `dnssection` and `dnsrd` are treated as not
 applicable to `SPEC10DNS` checks.
@@ -784,7 +784,7 @@ back and always planned a change.
 
 **Recorded by:** Atlantic BT · **Date:** 2026-09-30
 
-## A-033 — contactname and email cannot be changed on an existing subaccount
+## A-033: contactname and email cannot be changed on an existing subaccount
 
 **Assumption:** changing `contactname` or `email` on a subaccount that already has a value is
 a plan-time error; on an imported subaccount with no value, the configured value is recorded
