@@ -12,6 +12,16 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+// Length bounds for free-text attributes. NodePing stores these verbatim at
+// 100,000 characters and enforces no limit of its own, so the bounds are set
+// far above any real value but low enough to stop a pathological one before
+// it is sent.
+const (
+	maxContactNameLength = 1024
+	maxAddressLength     = 2048
+	maxWebhookDataLength = 65536
+)
+
 type ContactResourceModel struct {
 	ID         types.String   `tfsdk:"id"`
 	CustomerID types.String   `tfsdk:"customer_id"`
@@ -143,8 +153,11 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "The name of the contact. Used as a label.",
+				Description: "The name of the contact. Used as a label. At most 1024 characters.",
 				Optional:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(maxContactNameLength),
+				},
 			},
 			"custrole": schema.StringAttribute{
 				Description: "The permission role for this contact. Valid values: 'owner', 'edit', 'view', 'notify'. Defaults to 'notify'. 'owner' is an account's own login contact.",
@@ -183,8 +196,11 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 						// leaves a Required attribute unset and makes the
 						// contact impossible to import. See A-015.
 						"address": schema.StringAttribute{
-							Description: "The address value (email, phone number, webhook URL, etc.).",
+							Description: "The address value (email, phone number, webhook URL, etc.). 1 to 2048 characters.",
 							Required:    true,
+							Validators: []validator.String{
+								stringvalidator.LengthBetween(1, maxAddressLength),
+							},
 						},
 						"suppress_up": schema.BoolAttribute{
 							Description: "Suppress 'up' notifications to this address.",
@@ -253,9 +269,13 @@ the next plan will show a replacement. Changing ` + "`customer_id`" + ` forces a
 						"data": schema.StringAttribute{
 							Description: "Request body for webhook addresses (POST/PUT). " +
 								"If the value is valid JSON it is compared semantically, so whitespace and " +
-								"key ordering differences between the configuration and the API do not produce a diff.",
+								"key ordering differences between the configuration and the API do not produce a diff. " +
+								"At most 65536 characters.",
 							Optional:   true,
 							CustomType: JSONStringType{},
+							Validators: []validator.String{
+								stringvalidator.LengthAtMost(maxWebhookDataLength),
+							},
 							PlanModifiers: []planmodifier.String{
 								JSONSemanticPlanModifier(),
 							},

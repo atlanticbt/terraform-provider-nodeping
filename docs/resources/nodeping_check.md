@@ -157,7 +157,7 @@ resource "nodeping_check" "service" {
 ### Common Arguments
 
 - `type` - (Required) The type of check. See [Supported Check Types](#supported-check-types).
-- `target` - (Required for most types) The target URL, hostname, or IP address.
+- `target` - (Required for most types) The target URL, hostname, or IP address. At most 2048 characters.
 
   NodePing rewrites URL targets into a canonical form for `HTTP`, `HTTPADV`, `HTTPCONTENT`,
   `HTTPPARSE`, `SSL`, `AUDIO`, `MONGODB`, `PGSQL` and `REDIS` checks: it lower-cases the scheme and
@@ -170,7 +170,7 @@ resource "nodeping_check" "service" {
   An imported check records the target as NodePing returned it, which is the canonical form. That
   is the one attribute an import round trip cannot reproduce verbatim when the configuration spells
   it differently; the following plan is empty either way.
-- `label` - (Optional) Display label for the check. Defaults to target.
+- `label` - (Optional) Display label for the check. Defaults to target. At most 1024 characters.
 - `enabled` - (Optional) Whether the check is enabled. Defaults to `false`.
 - `public` - (Optional) Enable public reports. Defaults to `false`.
 - `interval` - (Optional) Check interval in minutes. Can be `0.25`, `0.5`, or any integer >= 1. Defaults to `15`,
@@ -217,7 +217,7 @@ consult, so the defaults are removed unconditionally.
 
 ### Content Matching Arguments
 
-- `contentstring` - (Optional) String to match in response.
+- `contentstring` - (Optional) String to match in response. At most 16384 characters.
 - `regex` - (Optional) Treat contentstring as regular expression.
 - `invert` - (Optional) Invert match (does not contain).
 
@@ -237,7 +237,7 @@ is accepted everywhere — otherwise an imported PUSH check would not validate. 
   as `null` by `tofu plan -generate-config-out`, and applying the result deletes the live headers.
   If a header carries a credential, encrypt the state and restrict who can read plan output.
 - `receiveheaders` - (Optional) Map of expected response headers.
-- `postdata` - (Optional) POST request body.
+- `postdata` - (Optional) POST request body. At most 65536 characters.
 - `ipv6` - (Optional) Use IPv6.
 
 ### DNS Arguments
@@ -456,6 +456,12 @@ resource "nodeping_check" "pgsql" {
 | `SSL` | SSL certificate |
 | `WEBSOCKET` | WebSocket check |
 | `WHOIS` | WHOIS domain lookup |
+
+## Length limits
+
+NodePing stores these values verbatim and enforces no length limit of its own, so the
+provider applies its own bounds at plan time, far above any value seen in practice:
+`label` 1024, `target` 2048, `contentstring` 16384 and `postdata` 65536 characters.
 
 ## Import
 
