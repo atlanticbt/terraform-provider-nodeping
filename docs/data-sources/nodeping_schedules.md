@@ -53,7 +53,7 @@ data "nodeping_schedules" "client" {
 |-----------|------|-------------|
 | `schedules` | List of Object | All schedules, sorted by ID. |
 | `schedules[].id` | String | The schedule name. |
-| `schedules[].monday` to `schedules[].sunday` | Object | The notification period for that day. It is `null` when the day has no schedule. Each day has the fields below. |
+| `schedules[].monday`, `schedules[].tuesday`, `schedules[].wednesday`, `schedules[].thursday`, `schedules[].friday`, `schedules[].saturday`, `schedules[].sunday` | Object | The notification period for that day. It is `null` when the day has no schedule. Each day has the fields below. |
 | `schedules[].<day>.time1` | String | The start of the notification period, in 24-hour `H:MM` or `HH:MM` format. It is empty on a day off. |
 | `schedules[].<day>.time2` | String | The end of the notification period. It is empty on a day off. |
 | `schedules[].<day>.exclude` | Bool | `true` when the period is inverted: NodePing notifies all day, except between `time1` and `time2`. |

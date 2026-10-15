@@ -55,7 +55,7 @@ data "nodeping_schedule" "client_hours" {
 | Attribute | Type | Description |
 |-----------|------|-------------|
 | `customer_id` | String | The ID of the account that owns the schedule, when the API gives it. |
-| `monday` to `sunday` | Object | The notification period for that day. It is `null` when the day has no schedule. Each day has the fields below. |
+| `monday`, `tuesday`, `wednesday`, `thursday`, `friday`, `saturday`, `sunday` | Object | The notification period for that day. It is `null` when the day has no schedule. Each day has the fields below. |
 | `<day>.time1` | String | The start of the notification period, in 24-hour `H:MM` or `HH:MM` format. It is empty on a day off. |
 | `<day>.time2` | String | The end of the notification period. It is empty on a day off. |
 | `<day>.exclude` | Bool | `true` when the period is inverted: NodePing notifies all day, except between `time1` and `time2`. |
