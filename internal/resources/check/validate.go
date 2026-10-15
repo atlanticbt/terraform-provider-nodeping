@@ -32,11 +32,27 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 		return
 	}
 
+	validateCredentialRules(config, &resp.Diagnostics)
+	validateHostCredentials(ctx, config.Hosts, &resp.Diagnostics)
+
+	if !isSet(config.Type) {
+		return
+	}
+	checkType := config.Type.ValueString()
+
+	validateTargetPresent(config, checkType, &resp.Diagnostics)
+	validateApplicability(config, checkType, &resp.Diagnostics)
+	validateMinInterval(config, checkType, &resp.Diagnostics)
+}
+
+// validateCredentialRules checks the credential rules that do not depend on
+// the check type.
+func validateCredentialRules(config CheckResourceModel, diags *diag.Diagnostics) {
 	// Redis Sentinel needs the master name; the API rejects the check without
 	// it. This is checked independently of the check type so that a typo in
 	// redistype still produces the more specific message below.
 	if isSet(config.RedisType) && config.RedisType.ValueString() == "sentinel" && !isSet(config.SentinelName) {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("sentinelname"),
 			"Missing Required Attribute",
 			"sentinelname is required when redistype is \"sentinel\".",
@@ -46,78 +62,81 @@ func (r *CheckResource) ValidateConfig(ctx context.Context, req resource.Validat
 	// A version without a value cannot do anything, and silently ignoring it
 	// would look like a password rotation that never happened.
 	if isSet(config.PasswordWOVersion) && !isSet(config.PasswordWO) {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("password_wo_version"),
 			"Missing Required Attribute",
 			"password_wo_version has no effect without password_wo.",
 		)
 	}
+}
 
-	validateHostCredentials(ctx, config.Hosts, &resp.Diagnostics)
-
-	if !isSet(config.Type) {
-		return
-	}
-	checkType := config.Type.ValueString()
-
+func validateTargetPresent(config CheckResourceModel, checkType string, diags *diag.Diagnostics) {
 	if !typesNotRequiringTarget[checkType] && config.Target.IsNull() {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("target"),
 			"Missing Required Attribute",
 			fmt.Sprintf("target is required for %s checks.", checkType),
 		)
 	}
+}
 
-	notApplicable := func(name string, value attr.Value, allowed map[string]bool, kinds string) {
-		if value.IsNull() || value.IsUnknown() {
-			return
-		}
-		// NodePing stores these boolean flags as false on check types that do
-		// not use them, and returns them on read: of 35 live checks surveyed,
-		// invert came back false on PUSH checks as well as HTTP ones. So a
-		// refresh legitimately produces invert = false on a PUSH check, and
-		// rejecting it would make the provider reject its own output. A flag
-		// turned on is still a mistake worth reporting.
-		if b, isBool := value.(types.Bool); isBool && !b.ValueBool() {
-			return
-		}
-		if allowed[checkType] {
-			return
-		}
-		// Other values only warn: NodePing keeps them when a check changes type
-		// and returns them on read (three live SSL checks carry a contentstring),
-		// so an error would make those checks unimportable.
-		if _, isBool := value.(types.Bool); !isBool {
-			resp.Diagnostics.AddAttributeWarning(
-				path.Root(name),
-				"Attribute Not Applicable To Check Type",
-				fmt.Sprintf("%s is only used by %s checks, but the check type is %s. NodePing stores it but does not act on it.", name, kinds, checkType),
-			)
-			return
-		}
-		resp.Diagnostics.AddAttributeError(
-			path.Root(name),
-			"Attribute Not Applicable To Check Type",
-			fmt.Sprintf("%s is only supported for %s checks, but the check type is %s.", name, kinds, checkType),
-		)
-	}
-
+// validateApplicability reports type-specific attributes set on a check type
+// that does not use them.
+func validateApplicability(config CheckResourceModel, checkType string, diags *diag.Diagnostics) {
 	const contentKinds = "HTTPCONTENT, HTTPADV, HTTPPARSE, DNS and DOHDOT"
-	notApplicable("contentstring", config.ContentString, contentMatchTypes, contentKinds)
-	notApplicable("regex", config.Regex, contentMatchTypes, contentKinds)
-	notApplicable("invert", config.Invert, contentMatchTypes, contentKinds)
+	checkApplicable("contentstring", config.ContentString, contentMatchTypes, contentKinds, checkType, diags)
+	checkApplicable("regex", config.Regex, contentMatchTypes, contentKinds, checkType, diags)
+	checkApplicable("invert", config.Invert, contentMatchTypes, contentKinds, checkType, diags)
 
 	const dnsKinds = "DNS and DOHDOT"
-	notApplicable("dnstype", config.DNSType, dnsTypes, dnsKinds)
-	notApplicable("dnstoresolve", config.DNSToResolve, dnsTypes, dnsKinds)
-	notApplicable("dnssection", config.DNSSection, dnsTypes, dnsKinds)
-	notApplicable("dnsrd", config.DNSRD, dnsTypes, dnsKinds)
+	checkApplicable("dnstype", config.DNSType, dnsTypes, dnsKinds, checkType, diags)
+	checkApplicable("dnstoresolve", config.DNSToResolve, dnsTypes, dnsKinds, checkType, diags)
+	checkApplicable("dnssection", config.DNSSection, dnsTypes, dnsKinds, checkType, diags)
+	checkApplicable("dnsrd", config.DNSRD, dnsTypes, dnsKinds, checkType, diags)
 
-	notApplicable("warningdays", config.WarningDays, warningDaysTypes,
-		"SSL, WHOIS, RDAP, SMTP, IMAP4, POP3, DOHDOT and SPEC10RDDS")
+	checkApplicable("warningdays", config.WarningDays, warningDaysTypes,
+		"SSL, WHOIS, RDAP, SMTP, IMAP4, POP3, DOHDOT and SPEC10RDDS", checkType, diags)
+}
 
+// checkApplicable reports one attribute set on a check type that does not use
+// it: an error for a boolean flag turned on, a warning for any other value.
+func checkApplicable(name string, value attr.Value, allowed map[string]bool, kinds, checkType string, diags *diag.Diagnostics) {
+	if value.IsNull() || value.IsUnknown() {
+		return
+	}
+	// NodePing stores these boolean flags as false on check types that do
+	// not use them, and returns them on read: of 35 live checks surveyed,
+	// invert came back false on PUSH checks as well as HTTP ones. So a
+	// refresh legitimately produces invert = false on a PUSH check, and
+	// rejecting it would make the provider reject its own output. A flag
+	// turned on is still a mistake worth reporting.
+	if b, isBool := value.(types.Bool); isBool && !b.ValueBool() {
+		return
+	}
+	if allowed[checkType] {
+		return
+	}
+	// Other values only warn: NodePing keeps them when a check changes type
+	// and returns them on read (three live SSL checks carry a contentstring),
+	// so an error would make those checks unimportable.
+	if _, isBool := value.(types.Bool); !isBool {
+		diags.AddAttributeWarning(
+			path.Root(name),
+			"Attribute Not Applicable To Check Type",
+			fmt.Sprintf("%s is only used by %s checks, but the check type is %s. NodePing stores it but does not act on it.", name, kinds, checkType),
+		)
+		return
+	}
+	diags.AddAttributeError(
+		path.Root(name),
+		"Attribute Not Applicable To Check Type",
+		fmt.Sprintf("%s is only supported for %s checks, but the check type is %s.", name, kinds, checkType),
+	)
+}
+
+func validateMinInterval(config CheckResourceModel, checkType string, diags *diag.Diagnostics) {
 	if min, ok := minIntervalByType[checkType]; ok && isSet(config.Interval) && config.Interval.ValueFloat64() < min {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("interval"),
 			"Interval Below NodePing Minimum",
 			fmt.Sprintf("NodePing replaces a %s interval below %v minutes with %d, so %v would never settle. Use %v or more, or leave interval unset for %d.",
