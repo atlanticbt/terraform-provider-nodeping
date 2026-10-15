@@ -100,3 +100,22 @@ job names are the required status checks:
 
 Acceptance tests are not part of CI: they need a live NodePing account and run by
 hand with `make test-acc`.
+
+## Scheduled acceptance tests
+
+`.github/workflows/acceptance.yml` runs the live acceptance suite every Monday and on
+demand (**Actions > acceptance > Run workflow**). It needs a disposable NodePing account
+that holds nothing but the test fixtures, never a production account.
+
+Create the environment once, under **Settings > Environments > New environment**, named
+`acceptance`:
+
+- **Deployment branches and tags:** selected branches, `main` only. Pull requests,
+  including those from forks, can then never read these secrets.
+- **Environment secrets:**
+  - `NODEPING_API_TOKEN`: a token scoped to the test account.
+  - `NODEPING_TEST_CHECK_ID`, `NODEPING_TEST_CONTACT_ID`, `NODEPING_TEST_CUSTOMER_ID`:
+    the fixtures described in `CONTRIBUTING.md`. Tests that need a missing fixture skip.
+
+The subaccount lifecycle test (`make test-acc-subaccount`) is deliberately not scheduled:
+it needs a parent-account token and deletes real subaccounts.
