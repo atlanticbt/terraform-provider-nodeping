@@ -56,6 +56,20 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		Type: plan.Type.ValueString(),
 	}
 
+	setCommonFields(ctx, plan, &req, diags)
+	setContentFields(ctx, plan, &req, diags)
+	setConnectionFields(plan, passwordWO, &req)
+	setDNSFields(ctx, plan, &req, diags)
+	setServiceFields(plan, &req)
+	req.Fields = fieldsRequest(ctx, plan, diags)
+	req.Hosts = hostsRequest(ctx, plan, hostPasswordsWO, diags)
+	req.Notifications = notificationsRequest(plan.Notifications)
+
+	return req
+}
+
+// setCommonFields sets the attributes every check type shares: identity, scheduling, location and tags.
+func setCommonFields(ctx context.Context, plan *CheckResourceModel, req *client.CheckCreateRequest, diags *diag.Diagnostics) {
 	if isSet(plan.Target) {
 		req.Target = plan.Target.ValueString()
 	}
@@ -127,6 +141,13 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.Tags = &tags
 	}
 
+	if isSet(plan.OldResultFail) {
+		req.OldResultFail = plan.OldResultFail.ValueBool()
+	}
+}
+
+// setContentFields sets the HTTP request and response matching attributes.
+func setContentFields(ctx context.Context, plan *CheckResourceModel, req *client.CheckCreateRequest, diags *diag.Diagnostics) {
 	if isSet(plan.ContentString) {
 		req.ContentString = plan.ContentString.ValueString()
 	}
@@ -167,20 +188,21 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.PostData = plan.PostData.ValueString()
 	}
 
+	if isSet(plan.Data) {
+		data := make(map[string]string)
+		diags.Append(plan.Data.ElementsAs(ctx, &data, false)...)
+		req.Data = data
+	}
+}
+
+// setConnectionFields sets the connection and credential attributes.
+func setConnectionFields(plan *CheckResourceModel, passwordWO types.String, req *client.CheckCreateRequest) {
 	if isSet(plan.Port) {
 		req.Port = apiInt(plan.Port.ValueInt64())
 	}
 
 	if isSet(plan.Username) {
 		req.Username = plan.Username.ValueString()
-	}
-
-	// password_wo wins over the deprecated password. The two are mutually
-	// exclusive at config validation time, so at most one of these fires.
-	if isSet(passwordWO) {
-		req.Password = passwordWO.ValueString()
-	} else if isSet(plan.Password) {
-		req.Password = plan.Password.ValueString()
 	}
 
 	if isSet(plan.Secure) {
@@ -195,6 +217,33 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.IPv6 = plan.IPv6.ValueBool()
 	}
 
+	if isSet(plan.ServerName) {
+		req.ServerName = plan.ServerName.ValueString()
+	}
+
+	if isSet(plan.Transport) {
+		req.Transport = plan.Transport.ValueString()
+	}
+
+	if isSet(plan.SSHKey) {
+		req.SSHKey = plan.SSHKey.ValueString()
+	}
+
+	if isSet(plan.ClientCert) {
+		req.ClientCert = plan.ClientCert.ValueString()
+	}
+
+	// password_wo wins over the deprecated password. The two are mutually
+	// exclusive at config validation time, so at most one of these fires.
+	if isSet(passwordWO) {
+		req.Password = passwordWO.ValueString()
+	} else if isSet(plan.Password) {
+		req.Password = plan.Password.ValueString()
+	}
+}
+
+// setDNSFields sets the DNS and DNS-over-HTTPS/TLS attributes.
+func setDNSFields(ctx context.Context, plan *CheckResourceModel, req *client.CheckCreateRequest, diags *diag.Diagnostics) {
 	if isSet(plan.DNSType) {
 		req.DNSType = plan.DNSType.ValueString()
 	}
@@ -211,16 +260,21 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.DNSRD = plan.DNSRD.ValueBool()
 	}
 
-	if isSet(plan.Transport) {
-		req.Transport = plan.Transport.ValueString()
+	if isSet(plan.DoHDoT) && plan.Type.ValueString() == "DOHDOT" {
+		req.DoHDoT = plan.DoHDoT.ValueString()
 	}
 
+	if isSet(plan.EDNS) {
+		edns := make(map[string]string)
+		diags.Append(plan.EDNS.ElementsAs(ctx, &edns, false)...)
+		req.EDNS = edns
+	}
+}
+
+// setServiceFields sets the attributes of the service-specific check types: certificates and domains, databases, SNMP, Redis, RDAP/WHOIS and audio.
+func setServiceFields(plan *CheckResourceModel, req *client.CheckCreateRequest) {
 	if isSet(plan.WarningDays) {
 		req.WarningDays = apiInt(plan.WarningDays.ValueInt64())
-	}
-
-	if isSet(plan.ServerName) {
-		req.ServerName = plan.ServerName.ValueString()
 	}
 
 	if isSet(plan.Email) {
@@ -239,69 +293,12 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 		req.Namespace = plan.Namespace.ValueString()
 	}
 
-	if isSet(plan.SSHKey) {
-		req.SSHKey = plan.SSHKey.ValueString()
-	}
-
-	if isSet(plan.ClientCert) {
-		req.ClientCert = plan.ClientCert.ValueString()
-	}
-
 	if isSet(plan.SNMPv) {
 		req.SNMPv = plan.SNMPv.ValueString()
 	}
 
 	if isSet(plan.SNMPCom) {
 		req.SNMPCom = plan.SNMPCom.ValueString()
-	}
-
-	if isSet(plan.Data) {
-		data := make(map[string]string)
-		diags.Append(plan.Data.ElementsAs(ctx, &data, false)...)
-		req.Data = data
-	}
-
-	if isSet(plan.Fields) {
-		fields := make(map[string]CheckFieldModel)
-		diags.Append(plan.Fields.ElementsAs(ctx, &fields, false)...)
-		if len(fields) > 0 {
-			req.Fields = make(map[string]client.CheckField, len(fields))
-			for key, f := range fields {
-				field := client.CheckField{Name: f.Name.ValueString()}
-				if isSet(f.Min) {
-					field.Min = f.Min.ValueInt64()
-				}
-				if isSet(f.Max) {
-					field.Max = f.Max.ValueInt64()
-				}
-				if isSet(f.Match) {
-					field.Match = f.Match.ValueString()
-				}
-				req.Fields[key] = field
-			}
-		}
-	}
-
-	if isSet(plan.Hosts) {
-		hosts := make(map[string]RedisHostModel)
-		diags.Append(plan.Hosts.ElementsAs(ctx, &hosts, false)...)
-		if len(hosts) > 0 {
-			req.Hosts = make(map[string]client.RedisHost, len(hosts))
-			for key, h := range hosts {
-				// password_wo wins over the deprecated password, exactly as it
-				// does for the check level credential. The two are mutually
-				// exclusive per host at config validation time.
-				password := h.Password.ValueString()
-				if wo, ok := hostPasswordsWO[key]; ok && isSet(wo) {
-					password = wo.ValueString()
-				}
-				req.Hosts[key] = client.RedisHost{
-					Host:     h.Host.ValueString(),
-					Port:     int(h.Port.ValueInt64()),
-					Password: password,
-				}
-			}
-		}
 	}
 
 	// redistype and dohdot carry schema defaults, so they are set for every
@@ -312,20 +309,6 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 
 	if isSet(plan.SentinelName) {
 		req.SentinelName = plan.SentinelName.ValueString()
-	}
-
-	if isSet(plan.DoHDoT) && plan.Type.ValueString() == "DOHDOT" {
-		req.DoHDoT = plan.DoHDoT.ValueString()
-	}
-
-	if isSet(plan.OldResultFail) {
-		req.OldResultFail = plan.OldResultFail.ValueBool()
-	}
-
-	if isSet(plan.EDNS) {
-		edns := make(map[string]string)
-		diags.Append(plan.EDNS.ElementsAs(ctx, &edns, false)...)
-		req.EDNS = edns
 	}
 
 	if isSet(plan.WhoisServer) {
@@ -347,16 +330,75 @@ func (r *CheckResource) buildCreateRequest(ctx context.Context, plan *CheckResou
 	if isSet(plan.VolumeMin) {
 		req.VolumeMin = apiInt(plan.VolumeMin.ValueInt64())
 	}
+}
 
-	for _, n := range plan.Notifications {
-		notif := map[string]interface{}{
+// fieldsRequest converts the planned PUSH fields into their API form, or nil
+// when none are configured.
+func fieldsRequest(ctx context.Context, plan *CheckResourceModel, diags *diag.Diagnostics) map[string]client.CheckField {
+	if !isSet(plan.Fields) {
+		return nil
+	}
+	fields := make(map[string]CheckFieldModel)
+	diags.Append(plan.Fields.ElementsAs(ctx, &fields, false)...)
+	if len(fields) == 0 {
+		return nil
+	}
+	out := make(map[string]client.CheckField, len(fields))
+	for key, f := range fields {
+		field := client.CheckField{Name: f.Name.ValueString()}
+		if isSet(f.Min) {
+			field.Min = f.Min.ValueInt64()
+		}
+		if isSet(f.Max) {
+			field.Max = f.Max.ValueInt64()
+		}
+		if isSet(f.Match) {
+			field.Match = f.Match.ValueString()
+		}
+		out[key] = field
+	}
+	return out
+}
+
+// hostsRequest converts the planned REDIS hosts into their API form, or nil
+// when none are configured. A host's password_wo wins over the deprecated
+// password, exactly as it does for the check level credential; the two are
+// mutually exclusive per host at config validation time.
+func hostsRequest(ctx context.Context, plan *CheckResourceModel, hostPasswordsWO map[string]types.String, diags *diag.Diagnostics) map[string]client.RedisHost {
+	if !isSet(plan.Hosts) {
+		return nil
+	}
+	hosts := make(map[string]RedisHostModel)
+	diags.Append(plan.Hosts.ElementsAs(ctx, &hosts, false)...)
+	if len(hosts) == 0 {
+		return nil
+	}
+	out := make(map[string]client.RedisHost, len(hosts))
+	for key, h := range hosts {
+		password := h.Password.ValueString()
+		if wo, ok := hostPasswordsWO[key]; ok && isSet(wo) {
+			password = wo.ValueString()
+		}
+		out[key] = client.RedisHost{
+			Host:     h.Host.ValueString(),
+			Port:     int(h.Port.ValueInt64()),
+			Password: password,
+		}
+	}
+	return out
+}
+
+// notificationsRequest converts the planned notifications into the API's
+// list of single-key maps, keyed by contact address ID.
+func notificationsRequest(notifications []NotificationModel) []map[string]interface{} {
+	var out []map[string]interface{}
+	for _, n := range notifications {
+		out = append(out, map[string]interface{}{
 			n.ContactID.ValueString(): map[string]interface{}{
 				"delay":    int(n.Delay.ValueInt64()),
 				"schedule": n.Schedule.ValueString(),
 			},
-		}
-		req.Notifications = append(req.Notifications, notif)
+		})
 	}
-
-	return req
+	return out
 }
