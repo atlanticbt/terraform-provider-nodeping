@@ -9,6 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
@@ -188,79 +189,29 @@ func (d *ChecksDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 		return
 	}
 
-	typeFilter := config.Type.ValueString()
-	labelFilter := config.Label.ValueString()
-
-	var tagFilter []string
+	filter := checkFilter{
+		checkType: config.Type.ValueString(),
+		label:     config.Label.ValueString(),
+	}
 	if !config.Tags.IsNull() && !config.Tags.IsUnknown() {
-		resp.Diagnostics.Append(config.Tags.ElementsAs(ctx, &tagFilter, false)...)
+		resp.Diagnostics.Append(config.Tags.ElementsAs(ctx, &filter.tags, false)...)
 		if resp.Diagnostics.HasError() {
 			return
 		}
 	}
 
-	// The API returns a map, so iterate in a deterministic order to keep the
-	// resulting list stable between plans.
-	ids := make([]string, 0, len(checks))
-	for id := range checks {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-
 	config.Checks = make([]CheckModel, 0, len(checks))
-	for _, id := range ids {
+	for _, id := range sortedCheckIDs(checks) {
 		check := checks[id]
 		if check.ID == "" {
 			// The list endpoint keys checks by ID; not every response repeats
 			// it inside the object.
 			check.ID = id
 		}
-		if typeFilter != "" && !strings.EqualFold(check.Type, typeFilter) {
+		if !filter.matches(check) {
 			continue
 		}
-		if labelFilter != "" && check.Label != labelFilter {
-			continue
-		}
-		if !hasAllTags(check.Tags, tagFilter) {
-			continue
-		}
-
-		checkModel := CheckModel{
-			ID:         types.StringValue(check.ID),
-			CustomerID: types.StringValue(check.CustomerID),
-			Type:       types.StringValue(check.Type),
-			Target:     types.StringValue(check.Parameters.Target),
-			Label:      types.StringValue(check.Label),
-			Enabled:    types.BoolValue(check.Enabled == "active" || check.Enabled == "true"),
-			State:      types.Int64Value(int64(check.State)),
-		}
-
-		if check.Interval.String() != "" {
-			if interval, err := check.Interval.Float64(); err == nil {
-				checkModel.Interval = types.Float64Value(interval)
-			} else {
-				resp.Diagnostics.AddError(
-					"Unexpected API Response",
-					"Could not parse interval for check "+check.ID+": "+err.Error(),
-				)
-			}
-		}
-
-		if dep, ok := check.Dep.(string); ok && dep != "" {
-			checkModel.Dep = types.StringValue(dep)
-		} else {
-			checkModel.Dep = types.StringNull()
-		}
-
-		if check.Tags != nil {
-			tags, diags := types.ListValueFrom(ctx, types.StringType, check.Tags)
-			resp.Diagnostics.Append(diags...)
-			checkModel.Tags = tags
-		} else {
-			checkModel.Tags = types.ListNull(types.StringType)
-		}
-
-		config.Checks = append(config.Checks, checkModel)
+		config.Checks = append(config.Checks, checkSummary(ctx, check, &resp.Diagnostics))
 	}
 
 	if resp.Diagnostics.HasError() {
@@ -268,6 +219,75 @@ func (d *ChecksDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &config)...)
+}
+
+// checkFilter holds the data source's optional type, label and tag filters.
+type checkFilter struct {
+	checkType string
+	label     string
+	tags      []string
+}
+
+func (f checkFilter) matches(check client.Check) bool {
+	if f.checkType != "" && !strings.EqualFold(check.Type, f.checkType) {
+		return false
+	}
+	if f.label != "" && check.Label != f.label {
+		return false
+	}
+	return hasAllTags(check.Tags, f.tags)
+}
+
+// sortedCheckIDs returns the map's keys in order. The API returns a map, so
+// iterating in a deterministic order keeps the resulting list stable between
+// plans.
+func sortedCheckIDs(checks map[string]client.Check) []string {
+	ids := make([]string, 0, len(checks))
+	for id := range checks {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// checkSummary maps one listed check to the data source's summary model.
+func checkSummary(ctx context.Context, check client.Check, diags *diag.Diagnostics) CheckModel {
+	checkModel := CheckModel{
+		ID:         types.StringValue(check.ID),
+		CustomerID: types.StringValue(check.CustomerID),
+		Type:       types.StringValue(check.Type),
+		Target:     types.StringValue(check.Parameters.Target),
+		Label:      types.StringValue(check.Label),
+		Enabled:    types.BoolValue(check.Enabled == "active" || check.Enabled == "true"),
+		State:      types.Int64Value(int64(check.State)),
+	}
+
+	if check.Interval.String() != "" {
+		if interval, err := check.Interval.Float64(); err == nil {
+			checkModel.Interval = types.Float64Value(interval)
+		} else {
+			diags.AddError(
+				"Unexpected API Response",
+				"Could not parse interval for check "+check.ID+": "+err.Error(),
+			)
+		}
+	}
+
+	if dep, ok := check.Dep.(string); ok && dep != "" {
+		checkModel.Dep = types.StringValue(dep)
+	} else {
+		checkModel.Dep = types.StringNull()
+	}
+
+	if check.Tags != nil {
+		tags, d := types.ListValueFrom(ctx, types.StringType, check.Tags)
+		diags.Append(d...)
+		checkModel.Tags = tags
+	} else {
+		checkModel.Tags = types.ListNull(types.StringType)
+	}
+
+	return checkModel
 }
 
 // hasAllTags reports whether every wanted tag is present on the check.

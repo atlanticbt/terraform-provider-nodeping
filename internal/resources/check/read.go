@@ -218,6 +218,24 @@ const defaultSchedule = "All"
 // the model is assigned, so the result is a faithful representation of the
 // remote object suitable for refresh and import.
 func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResourceModel, diags *diag.Diagnostics) {
+	// Diagnostics are appended in attribute order; the helpers run in that order.
+	mapCheckCore(check, model, diags)
+	mapCheckTags(ctx, check, model, diags)
+	model.RunLocations = runLocationsToList(ctx, check.RunLocations, diags)
+
+	p := check.Parameters
+	mapCheckNumbers(p, check.ID, model, diags)
+	mapCheckStrings(p, model)
+	mapCheckFlags(p, model)
+	model.SendHeaders = stringMapOrNull(ctx, p.SendHeaders, diags)
+	model.ReceiveHeaders = stringMapOrNull(ctx, p.ReceiveHeaders, diags)
+	mapCheckProtocolParams(ctx, p, check.ID, model, diags)
+
+	model.Notifications = mapNotifications(check.Notifications)
+}
+
+// mapCheckCore maps the check's own fields, outside its parameters.
+func mapCheckCore(check *client.Check, model *CheckResourceModel, diags *diag.Diagnostics) {
 	model.ID = types.StringValue(check.ID)
 	model.CustomerID = types.StringValue(check.CustomerID)
 	model.Type = types.StringValue(check.Type)
@@ -247,10 +265,14 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 	model.Description = stringOrNull(check.Description)
 	model.Dep = interfaceStringOrNull(check.Dep)
 	model.HomeLoc = interfaceStringOrNull(check.HomeLoc)
+}
 
-	// The API only knows the merged set, so it lands in tags_all. Splitting the
-	// practitioner's own tags back out needs the provider defaults and the
-	// prior state, which mapForRead has and this function does not.
+// mapCheckTags maps the tags NodePing holds.
+//
+// The API only knows the merged set, so it lands in tags_all. Splitting the
+// practitioner's own tags back out needs the provider defaults and the prior
+// state, which mapForRead has and this function does not.
+func mapCheckTags(ctx context.Context, check *client.Check, model *CheckResourceModel, diags *diag.Diagnostics) {
 	if check.Tags != nil {
 		tags, d := types.SetValueFrom(ctx, types.StringType, check.Tags)
 		diags.Append(d...)
@@ -259,18 +281,18 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 		model.TagsAll = types.SetNull(types.StringType)
 	}
 	model.Tags = model.TagsAll
+}
 
-	model.RunLocations = runLocationsToList(ctx, check.RunLocations, diags)
-
-	p := check.Parameters
-
+func mapCheckNumbers(p client.CheckParameters, checkID string, model *CheckResourceModel, diags *diag.Diagnostics) {
 	model.Target = types.StringValue(p.Target)
-	model.Threshold = int64OrNull(p.Threshold, "threshold", check.ID, diags)
-	model.Sens = int64OrNull(p.Sens, "sens", check.ID, diags)
-	model.StatusCode = int64OrNull(p.StatusCode, "statuscode", check.ID, diags)
-	model.Port = int64OrNull(p.Port, "port", check.ID, diags)
-	model.WarningDays = int64OrNull(p.WarningDays, "warningdays", check.ID, diags)
+	model.Threshold = int64OrNull(p.Threshold, "threshold", checkID, diags)
+	model.Sens = int64OrNull(p.Sens, "sens", checkID, diags)
+	model.StatusCode = int64OrNull(p.StatusCode, "statuscode", checkID, diags)
+	model.Port = int64OrNull(p.Port, "port", checkID, diags)
+	model.WarningDays = int64OrNull(p.WarningDays, "warningdays", checkID, diags)
+}
 
+func mapCheckStrings(p client.CheckParameters, model *CheckResourceModel) {
 	model.ContentString = stringOrNull(p.ContentString)
 	model.Method = stringOrNull(p.Method)
 	model.PostData = stringOrNull(p.PostData)
@@ -296,30 +318,20 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 	model.Secure = interfaceStringOrNull(p.Secure)
 	model.SSHKey = interfaceStringOrNull(p.SSHKey)
 	model.ClientCert = interfaceStringOrNull(p.ClientCert)
+}
 
+func mapCheckFlags(p client.CheckParameters, model *CheckResourceModel) {
 	model.Regex = boolOrNull(p.Regex)
 	model.Invert = boolOrNull(p.Invert)
 	model.Follow = boolOrNull(p.Follow)
 	model.IPv6 = boolOrNull(p.IPv6)
 	model.Verify = boolOrNull(p.Verify)
 	model.DNSRD = boolOrNull(p.DNSRD)
+}
 
-	if len(p.SendHeaders) > 0 {
-		headers, d := types.MapValueFrom(ctx, types.StringType, p.SendHeaders)
-		diags.Append(d...)
-		model.SendHeaders = headers
-	} else {
-		model.SendHeaders = types.MapNull(types.StringType)
-	}
-
-	if len(p.ReceiveHeaders) > 0 {
-		headers, d := types.MapValueFrom(ctx, types.StringType, p.ReceiveHeaders)
-		diags.Append(d...)
-		model.ReceiveHeaders = headers
-	} else {
-		model.ReceiveHeaders = types.MapNull(types.StringType)
-	}
-
+// mapCheckProtocolParams maps the parameters specific to WHOIS, RDAP, AGENT,
+// REDIS, DOHDOT, PUSH and the other protocol checks.
+func mapCheckProtocolParams(ctx context.Context, p client.CheckParameters, checkID string, model *CheckResourceModel, diags *diag.Diagnostics) {
 	model.WhoisServer = stringOrNull(p.WhoisServer)
 	model.RDAPUrl = stringOrNull(p.RDAPUrl)
 	model.Ignore = stringOrNull(p.Ignore)
@@ -334,22 +346,23 @@ func mapCheckToModel(ctx context.Context, check *client.Check, model *CheckResou
 
 	model.OldResultFail = boolOrNull(p.OldResultFail)
 	model.VerifyVolume = boolOrNull(p.VerifyVolume)
-	model.VolumeMin = int64OrNull(p.VolumeMin, "volumemin", check.ID, diags)
+	model.VolumeMin = int64OrNull(p.VolumeMin, "volumemin", checkID, diags)
 
 	model.Data = dataToMap(ctx, p.Data, diags)
+	model.EDNS = stringMapOrNull(ctx, p.EDNS, diags)
 
-	if len(p.EDNS) > 0 {
-		edns, d := types.MapValueFrom(ctx, types.StringType, p.EDNS)
-		diags.Append(d...)
-		model.EDNS = edns
-	} else {
-		model.EDNS = types.MapNull(types.StringType)
-	}
-
-	model.Fields = fieldsToMap(p.Fields, check.ID, diags)
+	model.Fields = fieldsToMap(p.Fields, checkID, diags)
 	model.Hosts = hostsToMap(p.Hosts, diags)
+}
 
-	model.Notifications = mapNotifications(check.Notifications)
+// stringMapOrNull renders a string map, or null when the API returned none.
+func stringMapOrNull(ctx context.Context, m map[string]string, diags *diag.Diagnostics) types.Map {
+	if len(m) == 0 {
+		return types.MapNull(types.StringType)
+	}
+	v, d := types.MapValueFrom(ctx, types.StringType, m)
+	diags.Append(d...)
+	return v
 }
 
 // stringOrDefault renders an API string, substituting a default when the API
