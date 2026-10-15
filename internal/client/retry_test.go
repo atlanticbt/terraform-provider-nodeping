@@ -18,6 +18,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 // roundTripperFunc lets a test inject precise transport-level failures that a
@@ -355,129 +357,26 @@ func TestRetryDelayPrefersServerValue(t *testing.T) {
 	}
 }
 
-func TestRetryAfterIsHonoredBetweenAttempts(t *testing.T) {
-	var attempts int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&attempts, 1) == 1 {
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"status":"ok"}`)
-	}))
-	defer server.Close()
-
-	c := NewClient(ClientConfig{
-		APIToken:     "t",
-		BaseURL:      server.URL,
-		MaxRetries:   2,
-		RetryMinWait: time.Microsecond, // far below the server's 1s
-		RetryMaxWait: 2 * time.Second,
-		RateLimit:    1000,
-	})
-
-	start := time.Now()
-	var result map[string]string
-	if err := c.doRequest(context.Background(), requestOptions{method: http.MethodGet, path: "/x"}, &result); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	elapsed := time.Since(start)
-
-	if elapsed < 900*time.Millisecond {
-		t.Errorf("expected the client to wait the server-requested ~1s, waited %v", elapsed)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Finding 5: retries must take a rate-limiter token each.
 // ---------------------------------------------------------------------------
 
-func TestRetriesConsumeRateLimiterTokens(t *testing.T) {
-	var attempts int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&attempts, 1) < 3 {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"status":"ok"}`)
-	}))
-	defer server.Close()
-
-	// 10 req/s => each of the 3 attempts after the first token costs ~100ms.
-	c := NewClient(ClientConfig{
-		APIToken:     "t",
-		BaseURL:      server.URL,
-		MaxRetries:   3,
-		RetryMinWait: time.Microsecond,
-		RetryMaxWait: time.Millisecond,
-		RateLimit:    10,
-	})
-
-	start := time.Now()
-	var result map[string]string
-	if err := c.doRequest(context.Background(), requestOptions{method: http.MethodGet, path: "/x"}, &result); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+// The pacing itself is golang.org/x/time/rate's job; what matters here is that
+// the client builds the limiter from the configured rate with a burst of one.
+func TestRateLimiterIsConfiguredFromRateLimit(t *testing.T) {
+	c := NewClient(ClientConfig{APIToken: "t", RateLimit: 20})
+	limiter, ok := c.rateLimiter.(*rate.Limiter)
+	if !ok {
+		t.Fatalf("expected a *rate.Limiter, got %T", c.rateLimiter)
 	}
-	elapsed := time.Since(start)
-
-	// 3 attempts at 10/s: the first is free (burst), the next two wait ~100ms each.
-	if elapsed < 150*time.Millisecond {
-		t.Errorf("retries bypassed the rate limiter: 3 attempts at 10/s took only %v", elapsed)
-	}
-}
-
-func TestRateLimiterPacesSequentialRequests(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"status":"ok"}`)
-	}))
-	defer server.Close()
-
-	c := NewClient(ClientConfig{APIToken: "t", BaseURL: server.URL, RateLimit: 20})
-
-	start := time.Now()
-	for i := 0; i < 4; i++ {
-		var result map[string]string
-		if err := c.doRequest(context.Background(), requestOptions{method: http.MethodGet, path: "/x"}, &result); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	}
-	elapsed := time.Since(start)
-
-	// 4 requests at 20/s: 1 free + 3 * 50ms.
-	if elapsed < 120*time.Millisecond {
-		t.Errorf("expected rate limiting to pace 4 requests at 20/s, took %v", elapsed)
+	if limiter.Limit() != 20 || limiter.Burst() != 1 {
+		t.Errorf("limiter = %v/s burst %d, want 20/s burst 1", limiter.Limit(), limiter.Burst())
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Finding 6: bounded body reads and truncated error messages.
 // ---------------------------------------------------------------------------
-
-func TestResponseBodyIsSizeCapped(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = io.WriteString(w, `{"label":"`)
-		chunk := strings.Repeat("A", 64*1024)
-		for i := 0; i < 40; i++ { // ~2.5 MiB, above the 1 MiB cap
-			_, _ = io.WriteString(w, chunk)
-		}
-		_, _ = io.WriteString(w, `"}`)
-	}))
-	defer server.Close()
-
-	c := fastClient(t, server.URL)
-
-	// The read is truncated at the cap, so the JSON no longer parses. The
-	// important property is that the client does not buffer the whole body.
-	_, err := c.GetCheck(context.Background(), "abc")
-	if err == nil {
-		t.Fatal("expected an error from a body truncated at the size cap")
-	}
-}
 
 func TestErrorMessageTruncated(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

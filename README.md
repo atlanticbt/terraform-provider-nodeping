@@ -64,12 +64,13 @@ provider "nodeping" {
 
 | Argument | Env var | Required | Description |
 |---|---|---|---|
-| `api_token` | `NODEPING_API_TOKEN` | yes | NodePing API token. A parent-account token reaches its subaccounts through `customer_id`; a token created for a subaccount reaches only that account. |
+| `api_token` | `NODEPING_API_TOKEN` | yes | NodePing API token. No other environment variable is read for it. A parent-account token reaches its subaccounts through `customer_id`; a token created for a subaccount reaches only that account. |
 | `customer_id` | `NODEPING_CUSTOMER_ID` | no | Default subaccount for resources that do not set `customer_id`. |
 | `api_url` | `NODEPING_API_URL` | no | Override the API base URL. Testing only. |
 | `default_tags` | — | no | Tags merged into every managed check. |
 | `rate_limit` | — | no | Requests per second. Default 10. |
-| `max_retries` | — | no | Default 3. |
+| `max_retries` | — | no | Retries after a failed request. Default 3; `0` makes a single attempt. |
+| `retry_wait_min`, `retry_wait_max` | — | no | Seconds between retries, with exponential backoff. Defaults 1 and 30; `0` retries without waiting. |
 
 ## Usage
 
