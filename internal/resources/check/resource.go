@@ -20,7 +20,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 var (

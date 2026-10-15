@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 // ---------------------------------------------------------------------------

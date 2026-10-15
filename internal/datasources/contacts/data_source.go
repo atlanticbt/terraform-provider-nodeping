@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 var _ datasource.DataSource = &ContactsDataSource{}

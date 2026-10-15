@@ -7,7 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 // NodePing only ever reports the merged set, so Read has to split the

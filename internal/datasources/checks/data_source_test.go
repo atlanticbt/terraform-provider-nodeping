@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 func newTestDataSource(t *testing.T, checks map[string]interface{}) (*ChecksDataSource, *string) {

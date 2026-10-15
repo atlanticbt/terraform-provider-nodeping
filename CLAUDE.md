@@ -276,7 +276,7 @@ These values define the fork and must stay consistent:
 | Thing | Value |
 |---|---|
 | Provider address | `atlanticbt.com/abt/nodeping` |
-| Go module path | `bitbucket.org/atlanticbt/terraform-provider-nodeping` |
+| Go module path | `github.com/atlanticbt/terraform-provider-nodeping` |
 | Binary name | `terraform-provider-nodeping` |
 | License | MPL-2.0 (unchanged from upstream) |
 

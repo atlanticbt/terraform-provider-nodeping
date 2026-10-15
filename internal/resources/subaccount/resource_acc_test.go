@@ -37,7 +37,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/provider"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/provider"
 )
 
 func testAccProtoV6ProviderFactories() map[string]func() (tfprotov6.ProviderServer, error) {

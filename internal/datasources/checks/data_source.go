@@ -13,8 +13,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
-	checkresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/check"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
+	checkresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/check"
 )
 
 var _ datasource.DataSource = &ChecksDataSource{}

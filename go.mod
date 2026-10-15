@@ -1,4 +1,4 @@
-module bitbucket.org/atlanticbt/terraform-provider-nodeping
+module github.com/atlanticbt/terraform-provider-nodeping
 
 go 1.25.8
 
