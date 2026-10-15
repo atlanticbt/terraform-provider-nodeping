@@ -112,7 +112,7 @@ func TestCreateCheckCreatesExactlyOneResource(t *testing.T) {
 			return
 		}
 		_ = id
-		conn.Close() // drop the connection without writing a response
+		_ = conn.Close() // drop the connection without writing a response
 	}))
 	defer server.Close()
 

@@ -322,7 +322,7 @@ func (r *MaintenanceResource) ImportState(ctx context.Context, req resource.Impo
 
 // parseImportID accepts "MAINTID" and "CUSTOMERID:MAINTID".
 func parseImportID(raw string) (maintenanceID, customerID string, err error) {
-	const usage = "Expected import ID in format 'maintenance_id' or 'customer_id:maintenance_id', got: %q"
+	const usage = "expected import ID in format 'maintenance_id' or 'customer_id:maintenance_id', got: %q"
 
 	parts := strings.Split(raw, ":")
 	switch len(parts) {

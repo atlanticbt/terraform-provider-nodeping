@@ -8,8 +8,36 @@ permissions:
   contents: read
 
 jobs:
+  # A release is only built from a commit that is already on main, so an
+  # unreviewed commit cannot be tagged and published.
+  verify-tag:
+    name: verify-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tagged commit must be on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at a commit that is not on main"
+            exit 1
+          fi
+
+  # The full CI suite (lint, race tests, govulncheck, gitleaks) on the tagged
+  # commit, not only the unit tests.
+  ci:
+    name: ci
+    needs: verify-tag
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   release:
     name: release
+    needs: [verify-tag, ci]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -21,8 +49,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod # the toolchain line in go.mod is the single source
-      - name: Unit tests
-        run: go test ./... -race
       # The registries verify the SHA256SUMS signature against the public key
       # registered for the namespace. See docs/releasing.md.
       - name: Import release signing key

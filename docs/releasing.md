@@ -78,11 +78,19 @@ that its history holds only the cleaned initial commit. Then, in one sitting:
    - Require status checks to pass, and the branch to be up to date: `fmt-vet`,
      `lint`, `test`, `vulncheck`, `secret-scan`.
    - Leave the bypass list empty.
-3. **Settings > Code security**: enable secret scanning and push protection,
+3. **Settings > Rules > Rulesets > New tag ruleset**, targeting `v*`:
+   - Restrict creations, updates and deletions.
+   - Bypass list: the `nodeping-maintainers` team, for creation only.
+
+   A release is only published from a `v*` tag, and the release workflow also
+   refuses a tag whose commit is not on `main` and runs the full CI suite first.
+   The ruleset stops anyone outside the team from creating such a tag, and stops
+   everyone from moving or deleting one once it is published.
+4. **Settings > Code security**: enable secret scanning and push protection,
    Dependabot alerts and Dependabot security updates, and private vulnerability
    reporting (which `SECURITY.md` points reporters to).
-4. **Settings > Actions > General**: workflow permissions read-only by default.
-5. Confirm `@atlanticbt/nodeping-maintainers` exists with write access, so
+5. **Settings > Actions > General**: workflow permissions read-only by default.
+6. Confirm `@atlanticbt/nodeping-maintainers` exists with write access, so
    `CODEOWNERS` resolves.
 
 ## CI status checks
@@ -93,7 +101,7 @@ job names are the required status checks:
 | Check | What it runs |
 |---|---|
 | `fmt-vet` | `gofmt -l` and `go vet` |
-| `lint` | golangci-lint v1.62.0 |
+| `lint` | golangci-lint v2.14.0 |
 | `test` | unit tests with the race detector and coverage |
 | `vulncheck` | govulncheck v1.8.0 |
 | `secret-scan` | gitleaks over the commits the change adds |

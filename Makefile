@@ -69,7 +69,7 @@ test-acc-subaccount:
 	go test -tags acceptance_subaccount ./internal/resources/subaccount/ -v -timeout 30m
 
 lint:
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run --timeout 5m ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
 
 fmt:
 	gofmt -w .

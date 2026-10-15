@@ -592,7 +592,10 @@ func mapAddressesToModel(ctx context.Context, apiAddresses map[string]client.Con
 	result := make([]AddressModel, 0, len(apiAddresses))
 	emitted := make(map[string]bool, len(apiAddresses))
 
-	for i, id := range matched {
+	// matched has one entry per planned address, so ranging over the plan keeps
+	// both indexes in bounds.
+	for i := range planAddresses {
+		id := matched[i]
 		if id == "" || emitted[id] {
 			continue
 		}

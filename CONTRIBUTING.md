@@ -49,7 +49,7 @@ These apply to every change, whoever or whatever writes it.
 
 - Go, at the version in `go.mod` (the `toolchain` directive pins the patch release)
 - OpenTofu 1.12 or later (`tofu`), for manual and acceptance testing
-- `golangci-lint` v1.62.0
+- `golangci-lint` v2.14.0
 - For acceptance tests, a NodePing account used only for testing
 
 ## Common tasks
