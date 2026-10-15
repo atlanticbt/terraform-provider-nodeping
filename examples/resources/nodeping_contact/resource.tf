@@ -21,7 +21,7 @@ resource "nodeping_contact" "multi_address" {
 
   address {
     type    = "sms"
-    address = "+1-555-123-4567"
+    address = "+15555550123"
   }
 }
 

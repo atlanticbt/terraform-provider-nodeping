@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
@@ -18,28 +19,28 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/account"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/accounts"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/check"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/checks"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contact"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contactgroup"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contactgroups"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/contacts"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/maintenance"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/maintenances"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofile"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofiles"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/schedule"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/schedules"
-	checkresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/check"
-	contactresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/contact"
-	contactgroupresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/contactgroup"
-	maintenanceresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/maintenance"
-	notificationprofileresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/notificationprofile"
-	scheduleresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/schedule"
-	subaccountresource "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/resources/subaccount"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/account"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/accounts"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/check"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/checks"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/contact"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/contactgroup"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/contactgroups"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/contacts"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/maintenance"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/maintenances"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofile"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofiles"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/schedule"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/schedules"
+	checkresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/check"
+	contactresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/contact"
+	contactgroupresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/contactgroup"
+	maintenanceresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/maintenance"
+	notificationprofileresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/notificationprofile"
+	scheduleresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/schedule"
+	subaccountresource "github.com/atlanticbt/terraform-provider-nodeping/internal/resources/subaccount"
 )
 
 var (
@@ -236,12 +237,63 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 		return
 	}
 
-	// Unknown values reach Configure when an attribute is derived from another
-	// resource's not-yet-applied output. Treating them as empty would either
-	// raise a misleading "missing token" error or silently fall back to an
-	// environment variable the practitioner did not intend to use.
+	rejectUnknownConnectionSettings(config, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	conn, ok := resolveConnection(config, &resp.Diagnostics)
+	if !ok {
+		return
+	}
+
+	rateLimit := rateLimitFrom(config)
+	retry := retryPolicyFrom(config)
+
+	defaultTags, ok := defaultTagsFrom(ctx, config, &resp.Diagnostics)
+	if !ok {
+		return
+	}
+
+	c := client.NewClient(client.ClientConfig{
+		APIToken:    conn.apiToken,
+		CustomerID:  conn.customerID,
+		BaseURL:     conn.apiURL,
+		RateLimit:   rateLimit,
+		Retry:       &retry,
+		UserAgent:   "terraform-provider-nodeping/" + p.version,
+		DefaultTags: defaultTags,
+	})
+
+	tflog.Debug(ctx, "NodePing client configured", map[string]interface{}{
+		"api_url":     conn.apiURL,
+		"customer_id": conn.customerID,
+		"rate_limit":  rateLimit,
+		"max_retries": retry.MaxRetries,
+	})
+
+	resp.DataSourceData = c
+	resp.ResourceData = c
+}
+
+// connectionSettings are the effective token, customer ID and API URL after
+// configuration values override the environment.
+type connectionSettings struct {
+	apiToken   string
+	customerID string
+	apiURL     string
+}
+
+// rejectUnknownConnectionSettings reports an error for each connection
+// attribute whose value is unknown.
+//
+// Unknown values reach Configure when an attribute is derived from another
+// resource's not-yet-applied output. Treating them as empty would either
+// raise a misleading "missing token" error or silently fall back to an
+// environment variable the practitioner did not intend to use.
+func rejectUnknownConnectionSettings(config NodePingProviderModel, diags *diag.Diagnostics) {
 	if config.APIToken.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("api_token"),
 			"Unknown NodePing API Token",
 			"The provider cannot create the NodePing API client as there is an unknown configuration value for the NodePing API token. "+
@@ -250,7 +302,7 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 	}
 
 	if config.CustomerID.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("customer_id"),
 			"Unknown NodePing Customer ID",
 			"The provider cannot create the NodePing API client as there is an unknown configuration value for the NodePing customer ID. "+
@@ -259,112 +311,97 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 	}
 
 	if config.APIURL.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
+		diags.AddAttributeError(
 			path.Root("api_url"),
 			"Unknown NodePing API URL",
 			"The provider cannot create the NodePing API client as there is an unknown configuration value for the NodePing API URL. "+
 				"Either apply the source of the value first, set the value statically in the configuration, or use the NODEPING_API_URL environment variable.",
 		)
 	}
+}
 
-	if resp.Diagnostics.HasError() {
-		return
+// resolveConnection applies configuration over the environment and validates
+// the result. It returns false after recording an error.
+func resolveConnection(config NodePingProviderModel, diags *diag.Diagnostics) (connectionSettings, bool) {
+	conn := connectionSettings{
+		apiToken:   stringFromConfigOrEnv(config.APIToken, "NODEPING_API_TOKEN"),
+		customerID: stringFromConfigOrEnv(config.CustomerID, "NODEPING_CUSTOMER_ID"),
+		apiURL:     stringFromConfigOrEnv(config.APIURL, "NODEPING_API_URL"),
 	}
 
-	apiToken := os.Getenv("NODEPING_API_TOKEN")
-	if apiToken == "" {
-		apiToken = os.Getenv("NODEPING_API_KEY")
-	}
-	if !config.APIToken.IsNull() {
-		apiToken = config.APIToken.ValueString()
-	}
-
-	if apiToken == "" {
-		resp.Diagnostics.AddAttributeError(
+	if conn.apiToken == "" {
+		diags.AddAttributeError(
 			path.Root("api_token"),
 			"Missing NodePing API Token",
 			"The provider cannot create the NodePing API client as there is a missing or empty value for the NodePing API token. "+
 				"Set the api_token value in the configuration or use the NODEPING_API_TOKEN environment variable. "+
 				"If either is already set, ensure the value is not empty.",
 		)
-		return
-	}
-
-	customerID := os.Getenv("NODEPING_CUSTOMER_ID")
-	if !config.CustomerID.IsNull() {
-		customerID = config.CustomerID.ValueString()
-	}
-
-	apiURL := os.Getenv("NODEPING_API_URL")
-	if !config.APIURL.IsNull() {
-		apiURL = config.APIURL.ValueString()
+		return conn, false
 	}
 
 	// Repeated from the attribute validator because the effective URL can come
 	// from NODEPING_API_URL, which no attribute validator ever sees.
-	if apiURL != "" {
-		if err := validateAPIURL(apiURL); err != nil {
-			resp.Diagnostics.AddAttributeError(
+	if conn.apiURL != "" {
+		if err := validateAPIURL(conn.apiURL); err != nil {
+			diags.AddAttributeError(
 				path.Root("api_url"),
 				"Invalid NodePing API URL",
 				err.Error()+". "+insecureURLDetail,
 			)
-
-			return
+			return conn, false
 		}
 	}
 
-	var rateLimit float64 = client.DefaultRateLimit
+	return conn, true
+}
+
+// stringFromConfigOrEnv returns the configured value when it is set, and the
+// environment variable otherwise.
+func stringFromConfigOrEnv(v types.String, envVar string) string {
+	if !v.IsNull() {
+		return v.ValueString()
+	}
+	return os.Getenv(envVar)
+}
+
+func rateLimitFrom(config NodePingProviderModel) float64 {
 	if !config.RateLimit.IsNull() && !config.RateLimit.IsUnknown() {
-		rateLimit = config.RateLimit.ValueFloat64()
+		return config.RateLimit.ValueFloat64()
 	}
+	return client.DefaultRateLimit
+}
 
-	var maxRetries int = client.DefaultMaxRetries
+// retryPolicyFrom builds the retry policy. It is passed to the client as a
+// RetryPolicy so a configured 0 reaches it as 0 ("disable retries", "no wait")
+// instead of being read as "unset".
+func retryPolicyFrom(config NodePingProviderModel) client.RetryPolicy {
+	retry := client.RetryPolicy{
+		MaxRetries: client.DefaultMaxRetries,
+		MinWait:    client.DefaultRetryMinWait,
+		MaxWait:    client.DefaultRetryMaxWait,
+	}
 	if !config.MaxRetries.IsNull() && !config.MaxRetries.IsUnknown() {
-		maxRetries = int(config.MaxRetries.ValueInt64())
+		retry.MaxRetries = int(config.MaxRetries.ValueInt64())
 	}
-
-	var retryWaitMin time.Duration = client.DefaultRetryMinWait
 	if !config.RetryWaitMin.IsNull() && !config.RetryWaitMin.IsUnknown() {
-		retryWaitMin = time.Duration(config.RetryWaitMin.ValueInt64()) * time.Second
+		retry.MinWait = time.Duration(config.RetryWaitMin.ValueInt64()) * time.Second
 	}
-
-	var retryWaitMax time.Duration = client.DefaultRetryMaxWait
 	if !config.RetryWaitMax.IsNull() && !config.RetryWaitMax.IsUnknown() {
-		retryWaitMax = time.Duration(config.RetryWaitMax.ValueInt64()) * time.Second
+		retry.MaxWait = time.Duration(config.RetryWaitMax.ValueInt64()) * time.Second
 	}
+	return retry
+}
 
+func defaultTagsFrom(ctx context.Context, config NodePingProviderModel, diags *diag.Diagnostics) ([]string, bool) {
 	var defaultTags []string
 	if !config.DefaultTags.IsNull() && !config.DefaultTags.IsUnknown() {
-		resp.Diagnostics.Append(config.DefaultTags.ElementsAs(ctx, &defaultTags, false)...)
-		if resp.Diagnostics.HasError() {
-			return
+		diags.Append(config.DefaultTags.ElementsAs(ctx, &defaultTags, false)...)
+		if diags.HasError() {
+			return nil, false
 		}
 	}
-
-	clientCfg := client.ClientConfig{
-		APIToken:     apiToken,
-		CustomerID:   customerID,
-		BaseURL:      apiURL,
-		RateLimit:    rateLimit,
-		MaxRetries:   maxRetries,
-		RetryMinWait: retryWaitMin,
-		RetryMaxWait: retryWaitMax,
-		UserAgent:    "terraform-provider-nodeping/" + p.version,
-		DefaultTags:  defaultTags,
-	}
-
-	c := client.NewClient(clientCfg)
-
-	tflog.Debug(ctx, "NodePing client configured", map[string]interface{}{
-		"api_url":     apiURL,
-		"customer_id": customerID,
-		"rate_limit":  rateLimit,
-		"max_retries": maxRetries,
-	})
-
-	resp.DataSourceData = c
-	resp.ResourceData = c
+	return defaultTags, true
 }
 
 func (p *NodePingProvider) Resources(ctx context.Context) []func() resource.Resource {

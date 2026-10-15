@@ -2,34 +2,34 @@
 page_title: "nodeping_contactgroups Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches all NodePing contact groups.
+  Reads all NodePing contact groups in one account, sorted by contact group ID.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_contactgroups (Data Source)
 
-Fetches every NodePing contact group on the account, ordered by group ID.
+Reads all NodePing contact groups in one account.
 
-Each group's `members` set holds contact **address** IDs, not contact IDs. See
-the [`nodeping_contactgroup` resource](../resources/nodeping_contactgroup.md)
-for why that distinction matters.
+In each contact group, `members` holds address IDs, not contact IDs. A NodePing contact owns one or more addresses. Each address has its own 8-character address ID, for example `K5SP9CQP`. A contact group holds addresses, not contacts. For more detail, see the [`nodeping_contactgroup`](../resources/nodeping_contactgroup.md) resource.
 
 ## Example Usage
 
 ```hcl
 data "nodeping_contactgroups" "all" {}
 
-output "group_ids" {
-  value = [for g in data.nodeping_contactgroups.all.contactgroups : g.id]
-}
-
 output "group_names" {
   value = [for g in data.nodeping_contactgroups.all.contactgroups : g.name]
 }
 ```
 
-### Looking a group up by name
+### Find a contact group by name
 
-The API has no name lookup, so filter the full list:
+The API cannot search by name. Filter the full list:
 
 ```hcl
 locals {
@@ -38,13 +38,9 @@ locals {
     if g.name == "Production Alerts"
   ])
 }
-
-output "prod_group_id" {
-  value = local.prod_group.id
-}
 ```
 
-### Finding which groups an address belongs to
+### Find the contact groups of one address
 
 ```hcl
 locals {
@@ -55,7 +51,7 @@ locals {
 }
 ```
 
-### Listing a SubAccount's groups
+### List the contact groups of a subaccount
 
 ```hcl
 data "nodeping_contactgroups" "client" {
@@ -67,15 +63,17 @@ data "nodeping_contactgroups" "client" {
 
 ### Optional
 
-- `customer_id` (String) The customer ID (SubAccount ID) to list contact groups
-  for. Omit to list the groups of the account the provider is configured with.
+- `customer_id` (String) The customer ID of the subaccount to list. If you do not set it, the provider uses its own `customer_id`, or the account of the API token.
 
 ### Read-Only
 
-- `contactgroups` (List of Object) Contact groups, ordered by group ID. Each
-  entry contains:
-  - `id` (String) The unique identifier of the contact group.
-  - `customer_id` (String) The customer ID that owns the group.
-  - `name` (String) The name of the contact group.
-  - `members` (Set of String) Contact address IDs in the group. These are not
-    contact IDs.
+- `contactgroups` (List of Object) The contact groups, sorted by contact group ID. See [Nested Schema for `contactgroups`](#nested-schema-for-contactgroups).
+
+### Nested Schema for `contactgroups`
+
+Read-Only:
+
+- `id` (String) The contact group ID.
+- `customer_id` (String) The customer ID of the account that owns the contact group.
+- `name` (String) The name of the contact group.
+- `members` (Set of String) The address IDs in the contact group. These are not contact IDs.

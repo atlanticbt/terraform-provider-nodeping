@@ -5,7 +5,7 @@ import (
 	"flag"
 	"log"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/provider"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
 
@@ -20,7 +20,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "atlanticbt.com/abt/nodeping",
+		Address: "registry.opentofu.org/atlanticbt/nodeping",
 		Debug:   debug,
 	}
 

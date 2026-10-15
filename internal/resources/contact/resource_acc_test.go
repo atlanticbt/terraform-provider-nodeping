@@ -14,7 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/provider"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/provider"
 )
 
 // Acceptance tests run against a dedicated NodePing test subaccount and create
@@ -487,14 +487,14 @@ resource "nodeping_contact" "hook" {
 }
 `
 
-// TestAccContact_webhookDataSemanticEquality is the live exercise of the SYS-78
-// fix, which until now had only unit tests behind it. Two pieces are needed and
+// TestAccContact_webhookDataSemanticEquality is the live exercise of the
+// webhook data phantom-diff fix, which until then had only unit tests behind it. Two pieces are needed and
 // each covers a different call: semantic equality on the value type settles the
 // refresh and apply-consistency paths, and JSONSemanticPlanModifier settles
 // PlanResourceChange, which is the only one that runs after an import.
 //
 // headers and querystrings ride along. They were deliberately left
-// non-sensitive in SYS-77 (A-015) because generated configuration writes null
+// non-sensitive (A-015) because generated configuration writes null
 // for a sensitive attribute, which made an imported webhook contact plan to
 // delete them; ImportStateVerify is what proves that still holds.
 func TestAccContact_webhookDataSemanticEquality(t *testing.T) {

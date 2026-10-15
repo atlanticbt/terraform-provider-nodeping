@@ -1,0 +1,182 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # The release workflow runs these same checks on the tagged commit.
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fmt-vet:
+    name: fmt-vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:" >&2
+            echo "$unformatted" >&2
+            exit 1
+          fi
+      - name: go vet
+        run: go vet ./...
+      - name: go mod tidy and verify
+        run: |
+          go mod tidy -diff
+          go mod verify
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      # Users copy the examples, so they must be in canonical format.
+      - name: tofu fmt
+        run: tofu fmt -check -diff -recursive examples
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: golangci-lint
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Unit tests only. Acceptance tests need a live NodePing account; they run
+      # weekly from acceptance.yml, which reads its secrets from a protected
+      # environment that pull requests cannot reach.
+      # -shuffle=on randomizes test order, so a test that depends on another
+      # test's side effects fails here instead of passing by luck.
+      - name: go test
+        run: go test ./... -race -shuffle=on -coverprofile=coverage.out -covermode=atomic
+      # The ABT floor is 80%. The gate is 90% so that coverage cannot drop far
+      # below the current level (about 95%) unnoticed. Go measures statements
+      # only; see A-034 in docs/assumptions.md.
+      - name: coverage gate
+        env:
+          MIN_COVERAGE: "90"
+        run: |
+          total="$(go tool cover -func=coverage.out | awk '/^total:/ {sub(/%/, "", $NF); print $NF}')"
+          echo "Total statement coverage: ${total}% (minimum ${MIN_COVERAGE}%)"
+          if ! awk -v t="$total" -v m="$MIN_COVERAGE" 'BEGIN { exit !(t + 0 >= m + 0) }'; then
+            echo "::error::Coverage ${total}% is below ${MIN_COVERAGE}%"
+            exit 1
+          fi
+
+  vulncheck:
+    name: vulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      # Scans only the commits this change adds: the PR's commits against its
+      # base, or the pushed range on main.
+      - name: gitleaks
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE_REF" ]; then
+            range="origin/${BASE_REF}..HEAD"
+          elif [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            range="${BEFORE}..HEAD"
+          else
+            range="HEAD"
+          fi
+          go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner \
+            --log-opts="$range" .
+
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    env:
+      TRIVY_VERSION: 0.75.0
+      # sha256 of trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz. It was checked against
+      # the release's cosign-signed checksums file. The pin means a replaced release
+      # asset fails here instead of running.
+      TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install trivy
+        run: |
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" trivy
+      - name: trivy fs
+        run: |
+          "$RUNNER_TEMP/trivy" fs --scanners vuln,secret,misconfig \
+            --severity HIGH,CRITICAL --exit-code 1 --no-progress .
+
+  # Audits the workflows themselves: template injection, secrets reaching
+  # untrusted code, cache poisoning in publishing jobs, unpinned actions.
+  workflow-audit:
+    name: workflow-audit
+    runs-on: ubuntu-latest
+    env:
+      ZIZMOR_VERSION: 1.30.1
+      # sha256 of zizmor-x86_64-unknown-linux-gnu.tar.gz, whose GitHub build
+      # attestation was verified with `gh attestation verify`.
+      ZIZMOR_SHA256: e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install zizmor
+        run: |
+          tarball="zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/${tarball}"
+          echo "${ZIZMOR_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" zizmor
+      - name: zizmor
+        run: '"$RUNNER_TEMP/zizmor" --offline --no-progress --min-severity low --format github .github/workflows'

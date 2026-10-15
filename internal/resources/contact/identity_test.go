@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 // newIdentity builds the identity container the framework hands to a resource
@@ -276,14 +276,5 @@ func TestImportStateNullIdentityFallsBackToTheStringID(t *testing.T) {
 	}
 	if got := decodeIdentity(t, ctx, resp.Identity); got.ID.ValueString() != "C1" {
 		t.Fatalf("identity after string import: %+v", got)
-	}
-}
-
-func TestKnownIdentityValueCollapsesUnknownToNull(t *testing.T) {
-	if got := knownIdentityValue(types.StringUnknown()); !got.IsNull() {
-		t.Fatalf("expected null, got %v", got)
-	}
-	if got := knownIdentityValue(types.StringValue("x")); got.ValueString() != "x" {
-		t.Fatalf("expected the value to pass through, got %v", got)
 	}
 }

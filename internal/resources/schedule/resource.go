@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -11,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 var (
@@ -81,12 +82,12 @@ func (r *ScheduleResource) Create(ctx context.Context, req resource.CreateReques
 			// PUT, so it is known even when the call failed. If NodePing stored
 			// the schedule the next plan can now reconcile or destroy it; if the
 			// request never landed, the next Read finds nothing and drops it.
-			recordCreatedID(ctx, resp, plan.ID.ValueString(), plan.CustomerID)
+			identity.RecordCreatedID(ctx, resp, plan.ID.ValueString(), plan.CustomerID)
 		}
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -123,7 +124,7 @@ func (r *ScheduleResource) Read(ctx context.Context, req resource.ReadRequest, r
 	state.CustomerID = resolveCustomerID(state.CustomerID, schedule.CustomerID)
 	mapDaysForRead(&state, schedule.Data)
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -157,7 +158,7 @@ func (r *ScheduleResource) Update(ctx context.Context, req resource.UpdateReques
 	// re-states the same values -- but on a resource created before the core
 	// supported identity there is no stored identity yet, and the framework
 	// rejects an update that leaves it null.
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -192,28 +193,13 @@ func (r *ScheduleResource) Delete(ctx context.Context, req resource.DeleteReques
 }
 
 func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	var scheduleID string
-	var customerID string
-
 	// An "identity" import block is handled first; anything else is the
 	// established string form, which must keep working unchanged.
-	if idFromIdentity, customerFromIdentity, ok := identityImportValues(ctx, req, &resp.Diagnostics); ok {
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if idFromIdentity == "" {
-			resp.Diagnostics.AddError(
-				"Invalid Import Identity",
-				"The 'id' attribute of the import identity must be a non-empty schedule ID.",
-			)
-			return
-		}
-		scheduleID = idFromIdentity
-		customerID = customerFromIdentity
-	} else {
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	scheduleID, customerID, fromIdentity := identity.FromImport(ctx, req, &resp.Diagnostics, "schedule")
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !fromIdentity {
 
 		idParts := strings.Split(req.ID, ":")
 
@@ -268,7 +254,7 @@ func (r *ScheduleResource) ImportState(ctx context.Context, req resource.ImportS
 	}
 	mapDaysForRead(&state, schedule.Data)
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }

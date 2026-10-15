@@ -1,41 +1,58 @@
-# ADR-002: Authentication Handling Strategy
+<!--
+doc: adr
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
-**Status**: Accepted  
-**Date**: 2026-01-27  
-**Decision Makers**: Terraform Provider Engineering
+# ADR-002: Authentication
+
+An ADR (Architecture Decision Record) records one design decision and its reasons.
+
+| Field | Value |
+|---|---|
+| Status | Accepted |
+| Date | 2026-01-27 |
+| Decision makers | Provider engineering |
 
 ## Context
 
-The NodePing API requires token-based authentication. We need to define:
+The NodePing API uses token authentication. We must decide three things:
 
-1. How users configure authentication
-2. How credentials are stored and transmitted
-3. How to handle multi-account scenarios
+1. How users configure authentication.
+2. How the provider stores and sends credentials.
+3. How the provider works with more than one account.
 
 ## Decision
 
-### Authentication Configuration
+### Configuration
 
-1. **Provider Block Configuration** (highest priority)
-   ```hcl
-   provider "nodeping" {
-     api_token = var.nodeping_token
-   }
-   ```
+The provider reads the token from these sources, in this order:
 
-2. **Environment Variable Fallback** (if not in config)
-   - `NODEPING_API_TOKEN` for the API token
-   - `NODEPING_CUSTOMER_ID` for SubAccount operations
+| Order | Source | Example |
+|---|---|---|
+| 1 | The provider block | `api_token = var.nodeping_token` |
+| 2 | The `NODEPING_API_TOKEN` environment variable | Used when the provider block has no token |
 
-### Credential Transmission
+The provider reads no other variable for the token.
 
-- Use **HTTP Basic Authentication** with token as username
-- Password field left empty (NodePing ignores it)
-- Never include token in query strings or logs
+`NODEPING_CUSTOMER_ID` is the environment variable for the SubAccount customer ID.
 
-### Multi-Account Pattern
+```hcl
+provider "nodeping" {
+  api_token = var.nodeping_token
+}
+```
 
-Use standard Terraform provider aliases:
+### Transmission
+
+- The provider uses HTTP Basic Authentication. The token is the user name.
+- The password field is empty. NodePing ignores it.
+- The provider never puts the token in a query string or a log.
+
+### More than one account
+
+Use standard provider aliases:
 
 ```hcl
 provider "nodeping" {
@@ -47,40 +64,46 @@ provider "nodeping" {
 
 ## Rationale
 
-### Why Provider Config + Env Var Fallback
+### Provider configuration with an environment variable
 
-1. **Flexibility**: Supports both explicit configuration and CI/CD patterns
-2. **Security**: Env vars avoid hardcoding secrets in HCL
-3. **Precedence**: Explicit config overrides env vars (expected behavior)
-4. **Standard Pattern**: Matches AWS, GCP, Azure provider patterns
+| Reason | Description |
+|---|---|
+| Flexibility | The method supports explicit configuration and CI/CD (continuous integration and delivery) pipelines. |
+| Security | An environment variable keeps the secret out of HCL files. |
+| Precedence | Explicit configuration overrides the environment variable. Users expect this. |
+| Standard pattern | The AWS, Google Cloud and Azure providers use the same pattern. |
 
-### Why HTTP Basic Auth
+### HTTP Basic Authentication
 
-1. **Security**: Token not exposed in URLs or logs
-2. **Simplicity**: Standard HTTP mechanism
-3. **NodePing Support**: Documented as supported method
+| Reason | Description |
+|---|---|
+| Security | The token is not in URLs or logs. |
+| Simplicity | It is a standard HTTP method. |
+| NodePing support | NodePing documents this method. |
 
-### Why Provider Aliases for Multi-Account
+### Provider aliases
 
-1. **Terraform Native**: Built-in pattern, no custom logic needed
-2. **Explicit**: Clear which provider handles which resources
-3. **Flexible**: Supports any number of accounts
+| Reason | Description |
+|---|---|
+| Native | OpenTofu and Terraform have this pattern. The provider needs no custom logic. |
+| Explicit | The configuration shows which provider manages each resource. |
+| Flexible | It supports any number of accounts. |
 
-## Security Controls
+## Security controls
 
-1. **Sensitive Marking**: `api_token` marked as `Sensitive` in schema
-2. **No Logging**: Token never included in log output
-3. **No State Storage**: Token not stored in Terraform state
-4. **Env Var Docs**: Document secure env var handling
+1. The schema marks `api_token` as `Sensitive`.
+2. The provider never writes the token to a log.
+3. The provider never stores the token in state.
+4. The documentation tells users how to keep environment variables secure.
 
 ## Consequences
 
-- Provider schema includes `api_token` as optional sensitive string
-- Client constructor reads from config first, then env vars
-- HTTP client sets Basic Auth header on all requests
-- Documentation includes security best practices
+- The provider schema has `api_token` as an optional, sensitive string.
+- The client reads the configuration first. Then it reads the environment variable.
+- The HTTP client sets the Basic Authentication header on all requests.
+- The documentation contains security guidance.
 
 ## References
 
-- [NodePing API Authentication](https://nodeping.com/docs-api-overview.html)
-- [Terraform Provider Configuration](https://developer.hashicorp.com/terraform/language/providers/configuration)
+- [NodePing API authentication](https://nodeping.com/docs-api-overview.html)
+- [Provider configuration](https://developer.hashicorp.com/terraform/language/providers/configuration)

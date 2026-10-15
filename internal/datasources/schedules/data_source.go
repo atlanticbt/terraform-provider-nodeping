@@ -10,8 +10,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
-	scheduleds "bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/schedule"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
+	scheduleds "github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/schedule"
 )
 
 var (

@@ -1,0 +1,48 @@
+# golangci-lint v2 configuration. CI and `make lint` pin the same version.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # The standard set (errcheck, govet, ineffassign, staticcheck, unused) plus:
+  default: standard
+  enable:
+    # security and correctness
+    - gosec
+    - errorlint
+    - bodyclose
+    - noctx
+    - unparam
+    # No locale: the codebase is written in British English, and without a
+    # locale misspell accepts both spellings and flags only genuine typos.
+    - misspell
+    # complexity, at thresholds that stop regressions without forcing rewrites
+    - gocyclo
+    - nestif
+  settings:
+    gocyclo:
+      min-complexity: 30
+    nestif:
+      min-complexity: 8
+  exclusions:
+    presets:
+      - common-false-positives
+      - std-error-handling
+    rules:
+      # Test helpers routinely take a parameter that every current caller
+      # passes the same value for; that is not a defect in test code.
+      - path: _test\.go
+        linters:
+          - unparam
+      # Tests use fake tokens (G101), marshal request fixtures that include a
+      # password field (G117), and call the API base URL their own fixtures
+      # configure (G704). Production code gets all three checks.
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "G101|G117|G704"
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -205,7 +206,8 @@ func TestDoRequestNoRetryOn400(t *testing.T) {
 		t.Errorf("expected 1 attempt (no retry on 400), got %d", attempts)
 	}
 
-	apiErr, ok := err.(*APIError)
+	var apiErr *APIError
+	ok := errors.As(err, &apiErr)
 	if !ok {
 		t.Fatalf("expected *APIError, got %T", err)
 	}

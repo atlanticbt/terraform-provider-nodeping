@@ -1,6 +1,7 @@
 package contact_test
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,7 +27,7 @@ func testAccAPIBase() string {
 // provider's decoding, so a test can see whether a value is an object or a
 // string on the wire.
 func testAccRawContact(id string) (map[string]interface{}, error) {
-	req, err := http.NewRequest(http.MethodGet, testAccAPIBase()+"/contacts/"+id, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, testAccAPIBase()+"/contacts/"+id, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +174,7 @@ resource "nodeping_contact" "notype" {
 // testAccCheckNoContactNamed confirms a rejected create left nothing behind.
 func testAccCheckNoContactNamed(name string) resource.TestCheckFunc {
 	return func(*terraform.State) error {
-		req, err := http.NewRequest(http.MethodGet, testAccAPIBase()+"/contacts", nil)
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, testAccAPIBase()+"/contacts", nil)
 		if err != nil {
 			return err
 		}

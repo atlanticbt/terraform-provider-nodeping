@@ -4,10 +4,22 @@ subcategory: ""
 description: |-
   Manages a NodePing monitoring check.
 ---
+<!--
+doc: registry-resource
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_check (Resource)
 
-Manages a NodePing monitoring check.
+Manages a NodePing check. A check tests a service at a fixed interval.
+When the result changes from pass to fail, or from fail to pass, NodePing sends notifications to the addresses and contact groups that you list.
+The provider supports all 33 NodePing check types.
+
+> **WARNING:** A change to `customer_id` replaces the check. OpenTofu deletes the live check and creates a new one, so the result history of the old check is lost.
+
+> **SECURITY:** Use `password_wo` for check credentials. The deprecated `password` attribute writes the plaintext value to the state file. Also enable OpenTofu state encryption.
 
 ## Example Usage
 
@@ -108,6 +120,9 @@ resource "nodeping_check" "smtp" {
 
 ### Check with Notifications
 
+`contact_id` takes a contact **address** ID or a contact group ID. It does not take a contact ID.
+The `nodeping_contact` resource gives each address ID as `address[*].id`.
+
 ```hcl
 resource "nodeping_check" "with_notifications" {
   type    = "HTTP"
@@ -120,13 +135,13 @@ resource "nodeping_check" "with_notifications" {
   sens      = 1
 
   notifications {
-    contact_id = nodeping_contact.ops.id
+    contact_id = nodeping_contact.ops.address[0].id
     delay      = 0
     schedule   = "All"
   }
 
   notifications {
-    contact_id = nodeping_contact.escalation.id
+    contact_id = nodeping_contactgroup.escalation.id
     delay      = 15
     schedule   = "All"
   }
@@ -134,6 +149,9 @@ resource "nodeping_check" "with_notifications" {
 ```
 
 ### Check with Dependency
+
+When the router check fails, NodePing sends no notifications for the service check.
+Refer to [notification dependency](../notification_dependency.md).
 
 ```hcl
 resource "nodeping_check" "router" {
@@ -152,131 +170,7 @@ resource "nodeping_check" "service" {
 }
 ```
 
-## Argument Reference
-
-### Common Arguments
-
-- `type` - (Required) The type of check. See [Supported Check Types](#supported-check-types).
-- `target` - (Required for most types) The target URL, hostname, or IP address.
-
-  NodePing rewrites URL targets into a canonical form for `HTTP`, `HTTPADV`, `HTTPCONTENT`,
-  `HTTPPARSE`, `SSL`, `AUDIO`, `MONGODB`, `PGSQL` and `REDIS` checks: it lower-cases the scheme and
-  host and gives an empty path a `/`, so `https://EXAMPLE.com` is stored as `https://example.com/`.
-  The provider recognises those rewrites and does not report them as a change, so either spelling
-  is stable in configuration. Surrounding whitespace is trimmed for every check type. Other types
-  store the target exactly as given, including `WEBSOCKET`, `FTP`, `RDAP`, `SIP` and `WHOIS`, which
-  accept a URL but do not canonicalise it.
-
-  An imported check records the target as NodePing returned it, which is the canonical form. That
-  is the one attribute an import round trip cannot reproduce verbatim when the configuration spells
-  it differently; the following plan is empty either way.
-- `label` - (Optional) Display label for the check. Defaults to target.
-- `enabled` - (Optional) Whether the check is enabled. Defaults to `false`.
-- `public` - (Optional) Enable public reports. Defaults to `false`.
-- `interval` - (Optional) Check interval in minutes. Can be `0.25`, `0.5`, or any integer >= 1. Defaults to `15`,
-  except `WHOIS` and `RDAP`, which default to `1440`. NodePing silently replaces a `WHOIS` interval
-  below `240` or an `RDAP` interval below `60` with `1440`, so the provider rejects those values at
-  plan time instead of letting them drift.
-- `threshold` - (Optional) Timeout in seconds. Defaults to `5`.
-- `sens` - (Optional) Number of rechecks before status change. `0` changes status on the first
-  failed result. Defaults to `2`. Zero values of `sens`, `statuscode`, `warningdays`, `volumemin`
-  and `port` are sent as the string `"0"`, because NodePing treats a numeric `0` as empty.
-- `mute` - (Optional) Mute all notifications. Defaults to `false`.
-- `dep` - (Optional) Check ID for notification dependency.
-- `description` - (Optional) Description text (max 1000 characters).
-- `autodiag` - (Optional) Enable automated diagnostics. Defaults to `false`.
-
-### Location Arguments
-
-- `runlocations` - (Optional) List of probe locations. Can be region codes (`nam`, `lam`, `eur`, `eao`, `wlw`) or probe codes (`ca`, `ny`, `tx`, etc.).
-- `homeloc` - (Optional) Preferred probe location or `roam` for rotating.
-
-### Tagging
-
-- `tags` - (Optional) Set of tags for grouping checks. This holds exactly what the configuration
-  declares; the provider's `default_tags` are not merged into it.
-- `tags_all` - (Read-only) The set actually applied to the check: `tags` plus the provider's
-  `default_tags`, with duplicates removed. This is what is sent to NodePing, so it is the value to
-  reference from outputs or other resources.
-
-The split exists because Terraform requires an optional argument's planned value to match the
-configuration. Merging `default_tags` into `tags` was rejected as an invalid plan as soon as a
-check declared any tags of its own. It is the same arrangement the AWS provider uses.
-
-On refresh the provider works backwards from what NodePing returns: `tags_all` is taken from the
-API, and `tags` is derived by removing the configured `default_tags`. A tag you declare that
-happens to also be a default is kept in `tags` rather than being absorbed into the defaults, so it
-does not disappear from your configuration on the next plan. On import there is no prior state to
-consult, so the defaults are removed unconditionally.
-
-### Notifications Block
-
-- `contact_id` - (Required) Contact or contact group ID to notify.
-- `delay` - (Optional) Delay in minutes before sending notification. Defaults to `0`.
-- `schedule` - (Optional) Notification schedule name.
-
-### Content Matching Arguments
-
-- `contentstring` - (Optional) String to match in response.
-- `regex` - (Optional) Treat contentstring as regular expression.
-- `invert` - (Optional) Invert match (does not contain).
-
-Both are rejected on a check type that does not support content matching, but only when set to
-`true`. NodePing stores them as `false` on every check type and returns them on read, so `false`
-is accepted everywhere — otherwise an imported PUSH check would not validate. The same applies to
-`dnsrd`.
-
-### HTTP Arguments
-
-- `follow` - (Optional) Follow redirects (up to 4).
-- `method` - (Optional) HTTP method for HTTPADV: `GET`, `POST`, `PUT`, `HEAD`, `TRACE`, `CONNECT`.
-- `statuscode` - (Optional) Expected HTTP status code, `100` to `599`. `0` is also accepted,
-  because NodePing returns it on some existing HTTPADV checks.
-- `sendheaders` - (Optional) Map of request headers. Not marked sensitive, so the values appear
-  in plan output and in generated configuration. That is deliberate: a sensitive map is written
-  as `null` by `tofu plan -generate-config-out`, and applying the result deletes the live headers.
-  If a header carries a credential, encrypt the state and restrict who can read plan output.
-- `receiveheaders` - (Optional) Map of expected response headers.
-- `postdata` - (Optional) POST request body.
-- `ipv6` - (Optional) Use IPv6.
-
-### DNS Arguments
-
-- `dnstype` - (Optional) DNS query type: `ANY`, `A`, `AAAA`, `CNAME`, `MX`, `NS`, `PTR`, `SOA`, `SRV`, `TXT`.
-- `dnstoresolve` - (Optional) FQDN to resolve.
-- `dnssection` - (Optional) DNS section to check: `answer`, `authority`, `additional`, `edns_options`.
-- `dnsrd` - (Optional) Recursion Desired bit. Defaults to `true`.
-
-  The four DNS attributes apply to `DNS` and `DOHDOT` checks. `SPEC10DNS` checks keep none of them,
-  so setting one there produces a warning (an error for `dnsrd = true`).
-- `transport` - (Optional) Transport protocol: `udp`, `tcp`.
-
-### SSL/TLS Arguments
-
-- `warningdays` - (Optional) Days before expiry to fail check. `0` is accepted; NodePing stores it
-  and returns it on read. The provider enforces no minimum because NodePing does not document one.
-- `servername` - (Optional) Server name for SNI.
-- `verify` - (Optional) Verify SSL certificate.
-- `secure` - (Optional) SSL mode: `false`, `ssl`, `starttls`.
-
-### Authentication Arguments
-
-- `username` - (Optional) Authentication username.
-- `password_wo` - (Optional, Write-only, Sensitive) Authentication password. The value is sent to the
-  NodePing API but is never written to the state file or to a saved plan. Conflicts with `password`.
-- `password_wo_version` - (Optional) Integer that triggers re-sending `password_wo`. Increment it
-  whenever the password changes.
-- `password` - (Optional, Sensitive, **Deprecated**) Authentication password. This value is stored in
-  state in plaintext. Use `password_wo` instead. Conflicts with `password_wo`.
-- `email` - (Optional) Email address used by `SMTP` checks when verifying mail delivery.
-- `sshkey` - (Optional) SSH private key ID.
-- `clientcert` - (Optional) Client certificate ID.
-
-#### Write-only passwords
-
-NodePing stores and returns check passwords in plaintext, so the credential cannot be protected on
-their side. What the provider controls is the state file, and `password_wo` is how it keeps the
-credential out of it.
+### FTP Check with a Write-Only Password
 
 ```hcl
 variable "ftp_password" {
@@ -294,73 +188,22 @@ resource "nodeping_check" "ftp" {
 }
 ```
 
-Write-only values are invisible to the plan differ: OpenTofu never stores them, so it has nothing to
-compare against and a changed `password_wo` on its own produces no diff. `password_wo_version` is
-what makes a rotation planable — bump it in the same change that alters the password.
+Refer to [Write-Only Passwords](#write-only-passwords) for the rotation procedure.
 
-The provider also never copies the password NodePing returns into state, on any code path, including
-import and refresh. After an import, `password_wo` and `password` are both null; add `password_wo` to
-the configuration to bring the credential back under management.
-
-Requires OpenTofu 1.11 or later. This provider targets OpenTofu 1.12+.
-
-Consumers should still enable OpenTofu state encryption. That protects the state at rest; it is not a
-substitute for keeping the secret out of state in the first place.
-
-### Network Arguments
-
-- `port` - (Optional/Required) Port number. Required for PORT and NTP checks.
-
-### Database Arguments
-
-- `database` - (Optional) Database name.
-- `query` - (Optional) Query to execute.
-- `namespace` - (Optional) MongoDB collection namespace.
-
-### SNMP Arguments
-
-- `snmpv` - (Optional) SNMP version: `1`, `2c`.
-- `snmpcom` - (Optional) SNMP community string.
-
-### Type-specific Arguments
-
-- `data` - (Optional) Map of strings. `CLUSTER` maps each member check ID to `"1"` (must be passing)
-  or `"0"` (must be failing); `HTTPADV` uses it for form data; `WEBSOCKET`, `SPEC10DNS` and
-  `SPEC10RDDS` use it for their own settings.
-- `fields` - (Optional) Map of result fields to parse and range check, used by `HTTPPARSE`, `SNMP`,
-  `MONGODB`, `MYSQL` and `PGSQL`. Each entry takes `name` (required), `min`, `max`, and `match`.
-  `match` is only honoured by `PGSQL`, `MYSQL` and `MONGODB`.
-- `hosts` - (Optional) Map of `REDIS` hosts, keyed by an arbitrary identifier. Each entry takes
-  `host` (required), `port`, and `password` (sensitive). The per-host password is never read back
-  from the API into state.
-- `redistype` - (Optional) `standalone` (default), `sentinel` or `cluster`. `REDIS` only.
-- `sentinelname` - (Optional) Redis Sentinel master name. **Required** when `redistype` is
-  `sentinel`.
-- `oldresultfail` - (Optional) Fail an `AGENT` or `PUSH` check when its results are older than the
-  check interval.
-- `edns` - (Optional) Map of EDNS options for `DOHDOT` checks. Every key must be a positive integer
-  option code.
-- `dohdot` - (Optional) `doh` (default) or `dot`. `DOHDOT` only.
-- `whoisserver` - (Optional) WHOIS server to query. `WHOIS` only.
-- `rdapurl` - (Optional) RDAP service URL, an absolute `http` or `https` URL. `RDAP` only.
-- `ignore` - (Optional) Values to ignore: a comma separated list of blocklists for `RBL`, or of
-  response codes for `SIP`.
-- `verifyvolume` - (Optional) Enable volume detection. `AUDIO` only.
-- `volumemin` - (Optional) Minimum acceptable volume in dB, between `-90` and `0`. `AUDIO` only.
-
-#### REDIS Sentinel
+### REDIS Sentinel
 
 ```hcl
 resource "nodeping_check" "redis" {
   type         = "REDIS"
+  target       = "redis://redis1.example.com:26379"
   label        = "Redis Sentinel"
   redistype    = "sentinel"
   sentinelname = "mymaster"
 
   hosts = {
     node1 = {
-      host        = "redis1.example.com"
-      port        = 26379
+      host = "redis1.example.com"
+      port = 26379
     }
     node2 = {
       host = "redis2.example.com"
@@ -370,7 +213,7 @@ resource "nodeping_check" "redis" {
 }
 ```
 
-#### CLUSTER
+### CLUSTER
 
 ```hcl
 resource "nodeping_check" "cluster" {
@@ -384,7 +227,7 @@ resource "nodeping_check" "cluster" {
 }
 ```
 
-#### PGSQL field matching
+### PGSQL Field Matching
 
 ```hcl
 resource "nodeping_check" "pgsql" {
@@ -407,74 +250,353 @@ resource "nodeping_check" "pgsql" {
 }
 ```
 
-## Attribute Reference
+## Schema
 
-- `id` - The unique identifier of the check.
-- `customer_id` - The customer ID (account ID) that owns this check. Set it to place the check in a
-  SubAccount; omit it to use the account the provider token belongs to. Changing it replaces the
-  check, and an empty string is rejected rather than read as "no SubAccount".
-- `state` - Current state: `0` (failing) or `1` (passing).
-- `created` - Creation timestamp (milliseconds).
-- `modified` - Last modification timestamp (milliseconds).
-- `checktoken` - Token used by `AGENT` and `PUSH` checks to submit results. Generated by NodePing and
-  read-only.
+### Required
 
-## Supported Check Types
+- `type` (String) The check type. Must be one of the values in [Supported Check Types](#supported-check-types). The value is case-sensitive. A change to `type` updates the check in place.
 
-| Type | Description |
-|------|-------------|
-| `AGENT` | NodePing Agent check |
-| `AUDIO` | Audio stream check |
-| `CLUSTER` | Cluster of checks |
-| `DNS` | DNS resolution check |
-| `DOHDOT` | DNS over HTTPS/TLS |
-| `FTP` | FTP server check |
-| `HTTP` | HTTP/HTTPS check |
-| `HTTPADV` | Advanced HTTP check |
-| `HTTPCONTENT` | HTTP content match |
-| `HTTPPARSE` | HTTP response parsing |
-| `IMAP4` | IMAP mail server |
-| `MONGODB` | MongoDB database |
-| `MTR` | MTR traceroute |
-| `MYSQL` | MySQL database |
-| `NTP` | NTP time server |
-| `PGSQL` | PostgreSQL database |
-| `PING` | ICMP ping |
-| `POP3` | POP3 mail server |
-| `PORT` | TCP port check |
-| `PUSH` | Push-based check |
-| `RBL` | Real-time Blacklist |
-| `RDAP` | RDAP domain lookup |
-| `RDP` | Remote Desktop |
-| `REDIS` | Redis database |
-| `SIP` | SIP VoIP check |
-| `SMTP` | SMTP mail server |
-| `SNMP` | SNMP check |
-| `SPEC10DNS` | SPEC10 DNS |
-| `SPEC10RDDS` | SPEC10 RDDS |
-| `SSH` | SSH server |
-| `SSL` | SSL certificate |
-| `WEBSOCKET` | WebSocket check |
-| `WHOIS` | WHOIS domain lookup |
+### Optional
+
+The provider validates the attributes below at plan time.
+Some attributes apply only to some check types. Refer to [Type Applicability](#type-applicability).
+
+#### General
+
+- `target` (String) The URL, host name, or IP address that the check tests. At most 2048 characters. Required for all check types except `AGENT`, `CLUSTER`, `DNS`, `PUSH`, `SPEC10DNS` and `SPEC10RDDS`. Refer to [Target Normalization](#target-normalization).
+- `label` (String) The display label. At most 1024 characters. If you do not set it, NodePing uses the target.
+- `enabled` (Boolean) Set to `true` to run the check. Default `false`.
+- `public` (Boolean) Set to `true` to enable public reports. Default `false`.
+- `interval` (Number) The time between two runs, in minutes. Must be `0.25`, `0.5`, or a whole number of 1 or more. Default `15`. For `WHOIS` and `RDAP`, the default is `1440`. Refer to [Interval Minimums](#interval-minimums).
+- `threshold` (Number) The timeout, in seconds. Must be 1 or more. Default `5`.
+- `sens` (Number) The number of rechecks before the status changes. Must be 0 or more. `0` changes the status on the first failed result. Default `2`.
+- `mute` (Boolean) Set to `true` to mute all notifications. Default `false`.
+- `dep` (String) The ID of the parent check. When the parent check fails, NodePing sends no notifications for this check. Refer to [notification dependency](../notification_dependency.md).
+- `description` (String) Notes about the check. At most 1000 characters.
+- `autodiag` (Boolean) Set to `true` to enable automated diagnostics. Default `false`.
+- `customer_id` (String) The customer ID of the subaccount that owns the check. If you do not set it, the provider uses its own `customer_id`, or the account of the API token. Must not be an empty string. Changing it forces replacement.
+
+#### Locations
+
+- `runlocations` (List of String) The locations that run the check. Each entry must be one of these:
+  - A region code: `nam`, `lam`, `eur`, `eao` or `wlw`. The match ignores letter case.
+  - A two-letter probe code, for example `ca` or `ny`.
+  - The ID of an `AGENT` check.
+
+  If you do not set it, the value comes from NodePing.
+- `homeloc` (String) The preferred probe location. Set `roam` to rotate between locations. If you do not set it, the value comes from NodePing.
+
+#### Tags
+
+- `tags` (Set of String) The tags that your configuration declares. Each tag must not be an empty string. The provider `default_tags` are not in this set.
+
+Refer to [Tags and Default Tags](#tags-and-default-tags).
+
+#### Notifications
+
+- `notifications` (Block List) One block for each notification target. Refer to [Nested Schema for `notifications`](#nested-schema-for-notifications).
+
+#### Content Matching
+
+- `contentstring` (String) The text to find in the response. At most 16384 characters.
+- `regex` (Boolean) Set to `true` to read `contentstring` as a regular expression.
+- `invert` (Boolean) Set to `true` to fail the check when the response contains `contentstring`.
+
+#### HTTP
+
+- `follow` (Boolean) Set to `true` to follow redirects, up to 4.
+- `method` (String) The HTTP method for `HTTPADV`. Must be `GET`, `POST`, `PUT`, `HEAD`, `TRACE` or `CONNECT`.
+- `statuscode` (Number) The expected HTTP status code. Must be `0` or between `100` and `599`. NodePing returns `0` on some existing `HTTPADV` checks.
+- `sendheaders` (Map of String) The request headers to send. This attribute is not marked sensitive. Refer to [Request Headers](#request-headers).
+- `receiveheaders` (Map of String) The response headers to expect.
+- `postdata` (String) The request body for `HTTPADV`. At most 65536 characters.
+- `ipv6` (Boolean) Set to `true` to use IPv6.
+
+#### DNS
+
+- `dnstype` (String) The DNS query type. Must be `ANY`, `A`, `AAAA`, `CNAME`, `MX`, `NS`, `PTR`, `SOA`, `SRV` or `TXT`.
+- `dnstoresolve` (String) The FQDN to resolve.
+- `dnssection` (String) The section of the DNS reply to check. Must be `answer`, `authority`, `additional` or `edns_options`.
+- `dnsrd` (Boolean) The Recursion Desired bit. If you do not set it, the value comes from NodePing.
+- `transport` (String) The transport protocol for `DNS` and `SIP` checks. Must be `udp`, `tcp`, `tls`, `ws` or `wss`.
+- `dohdot` (String) The protocol for `DOHDOT` checks: `doh` (DNS over HTTPS) or `dot` (DNS over TLS). Default `doh`. The provider sends it only for `DOHDOT` checks.
+- `edns` (Map of String) EDNS options for `DOHDOT` checks. Each key must be a positive integer option code.
+
+#### SSL and TLS
+
+- `warningdays` (Number) The number of days before the certificate or domain expires that the check fails. The provider enforces no minimum, because NodePing does not document one. NodePing accepts and keeps `0`.
+- `servername` (String) The server name for SNI.
+- `verify` (Boolean) Set to `true` to verify the SSL certificate or DNSSEC.
+- `secure` (String) The SSL mode. Must be `false`, `ssl` or `starttls`.
+- `clientcert` (String) The ID of a client certificate, for `HTTPADV` and `DOHDOT` checks.
+
+#### Authentication
+
+- `username` (String) The user name for authentication.
+- `password_wo` (String, Sensitive, Write-only) The password for authentication. The provider sends it to NodePing. OpenTofu does not write it to state or to a saved plan. Conflicts with `password`. Refer to [Write-Only Passwords](#write-only-passwords).
+- `password_wo_version` (Number) Increment this value to send `password_wo` again. A plan error occurs if you set it without `password_wo`.
+- `password` (String, Sensitive, **Deprecated**) The password for authentication. OpenTofu writes this value to state in plaintext. Use `password_wo` instead. Conflicts with `password_wo`.
+- `email` (String) The email address that `SMTP` checks use to verify mail delivery.
+- `sshkey` (String) The ID of an SSH private key, for `SSH` checks.
+
+#### Network
+
+- `port` (Number) The port number. Must be between `1` and `65535`. Required for PORT and NTP checks.
+
+#### Database
+
+- `database` (String) The database name.
+- `query` (String) The query to run.
+- `namespace` (String) The MongoDB collection namespace.
+
+#### SNMP
+
+- `snmpv` (String) The SNMP version. Must be `1` or `2c`.
+- `snmpcom` (String, Sensitive) The SNMP community string. The provider reads it back from NodePing, so the value is in state.
+
+#### Type-Specific
+
+- `data` (Map of String) Settings for some check types:
+  - `CLUSTER`: each key is a member check ID. The value is `"1"` (must pass) or `"0"` (must fail).
+  - `HTTPADV`: form data to send with the request.
+  - `WEBSOCKET`, `SPEC10DNS` and `SPEC10RDDS`: the settings of that type.
+- `fields` (Attributes Map) The result fields to parse and range check, for `HTTPPARSE`, `SNMP`, `MONGODB`, `MYSQL` and `PGSQL`. The map key is the field ID in the NodePing results. Refer to [Nested Schema for `fields`](#nested-schema-for-fields).
+- `hosts` (Attributes Map) The `REDIS` hosts, keyed by an identifier that you choose. Refer to [Nested Schema for `hosts`](#nested-schema-for-hosts).
+- `redistype` (String) The Redis deployment type. Must be `standalone`, `sentinel` or `cluster`. Default `standalone`. The provider sends it only for `REDIS` checks.
+- `sentinelname` (String) The Redis Sentinel master name. Required when `redistype` is `sentinel`.
+- `oldresultfail` (Boolean) Set to `true` to fail an `AGENT` or `PUSH` check when its results are older than the check interval.
+- `whoisserver` (String) The WHOIS server to query. For `WHOIS` only.
+- `rdapurl` (String) The RDAP service URL. Must be an absolute `http` or `https` URL. For `RDAP` only.
+- `ignore` (String) A comma-separated list of values to ignore. For `RBL`, the values are blocklists. For `SIP`, the values are response codes.
+- `verifyvolume` (Boolean) Set to `true` to enable volume detection. For `AUDIO` only.
+- `volumemin` (Number) The minimum volume, in dB. Must be between `-90` and `0`. For `AUDIO` only.
+
+### Read-Only
+
+- `id` (String) The check ID. NodePing generates it. You cannot set it.
+- `tags_all` (Set of String) The tags that NodePing keeps on the check: `tags` plus the provider `default_tags`, without duplicates.
+- `state` (Number) The current state: `0` means failing, `1` means passing.
+- `created` (Number) The creation time, in milliseconds since the Unix epoch.
+- `modified` (Number) The time of the last change, in milliseconds since the Unix epoch.
+- `checktoken` (String, Sensitive) The token that `AGENT` and `PUSH` checks use to submit results. NodePing generates it.
+
+### Nested Schema for `notifications`
+
+Required:
+
+- `contact_id` (String) The address ID of a contact (`nodeping_contact.x.address[N].id`) or a contact group ID. Do not use a contact ID.
+
+Optional:
+
+- `delay` (Number) The time to wait before NodePing sends the notification, in minutes. Default `0`.
+- `schedule` (String) The name of the schedule. If you do not set it, the value comes from NodePing.
+
+### Nested Schema for `fields`
+
+Required:
+
+- `name` (String) The name of the field in the parsed result.
+
+Optional:
+
+- `min` (Number) The minimum value that passes.
+- `max` (Number) The maximum value that passes.
+- `match` (String) The text that the field must match. Only `PGSQL`, `MYSQL` and `MONGODB` use it.
+
+### Nested Schema for `hosts`
+
+Required:
+
+- `host` (String) The host name or IP address of the Redis node.
+
+Optional:
+
+- `port` (Number) The port of the Redis node. Must be between `1` and `65535`.
+- `password_wo` (String, Sensitive, Write-only) The password for the node. OpenTofu does not write it to state or to a saved plan. Conflicts with `password` on the same host.
+- `password_wo_version` (Number) Increment this value to send `password_wo` for this host again. A plan error occurs if you set it without `password_wo` on the same host.
+- `password` (String, Sensitive, **Deprecated**) The password for the node. OpenTofu writes this value to state in plaintext. Use `password_wo` instead.
 
 ## Import
 
-Checks can be imported using the check ID:
+> **SECURITY:** NodePing returns check passwords in plaintext. The provider does not copy them into state. After an import, `password`, `password_wo` and every `hosts[*].password` are null.
+
+Import a check with its check ID:
 
 ```shell
-terraform import nodeping_check.example 201205050153W2Q4C-0J2HSIRF
+tofu import nodeping_check.example 201205050153W2Q4C-0J2HSIRF
 ```
 
-For SubAccount checks, use the format `customer_id:check_id`:
+For a check in a subaccount, use the format `customer_id:check_id`:
 
 ```shell
-terraform import nodeping_check.example 201205050153W2Q4C:201205050153W2Q4C-0J2HSIRF
+tofu import nodeping_check.example 201205050153W2Q4C:201205050153W2Q4C-0J2HSIRF
 ```
+
+You can also use an `import` block with an `identity`. Set `id`. For a subaccount, also set `customer_id`.
+
+```hcl
+import {
+  to = nodeping_check.example
+  identity = {
+    id          = "201205050153W2Q4C-0J2HSIRF"
+    customer_id = "201205050153W2Q4C"
+  }
+}
+```
+
+The import writes `customer_id` to state. The provider uses it for all later API calls for this check.
+Import with identity requires OpenTofu 1.12 or later.
+
+To manage the credential after an import, add `password_wo` and `password_wo_version` to the configuration.
+
+## Write-Only Passwords
+
+NodePing keeps check passwords in plaintext and returns them on each read.
+The provider cannot protect the credential on the NodePing side. It keeps the credential out of your state file.
+
+The provider never copies the password from NodePing into state.
+This applies to create, update, refresh and import.
+`password_wo` requires OpenTofu 1.11 or later. This provider targets OpenTofu 1.12 or later.
+
+> **CAUTION:** OpenTofu does not store `password_wo`, so it cannot compare the old and new values. A change to `password_wo` alone produces no plan. Increment `password_wo_version` in the same change.
+
+To rotate a password:
+
+1. Set the new value in the variable that `password_wo` reads.
+2. Increment `password_wo_version` by 1.
+3. Run `tofu apply`.
+
+The same procedure applies to `hosts[*].password_wo` and `hosts[*].password_wo_version` on `REDIS` checks.
+
+State encryption protects the state file at rest. It does not replace write-only attributes.
+Commands such as `tofu show` and `tofu state pull` print state values to any operator who can run them.
+
+## Tags and Default Tags
+
+The provider uses two attributes for tags:
+
+| Attribute | Contents |
+|---|---|
+| `tags` | Only the tags that your configuration declares. |
+| `tags_all` | `tags` plus the provider `default_tags`. The provider sends this set to NodePing. |
+
+To use the tags that NodePing keeps, refer to `tags_all` in outputs and other resources.
+
+The provider cannot merge `default_tags` into `tags`.
+OpenTofu requires the planned value of an optional argument to match the configuration.
+A merged `tags` value fails the plan when a check declares its own tags.
+The AWS provider uses the same two-attribute design.
+
+On refresh, the provider reads `tags_all` from NodePing.
+It then calculates `tags` as `tags_all` without the configured `default_tags`.
+If you declare a tag that is also a default tag, the provider keeps it in `tags`.
+Thus the tag does not show as a removal in the next plan.
+An import has no prior state, so the provider removes all default tags from `tags`.
+
+## Target Normalization
+
+NodePing changes some URL targets into a canonical form before it stores them.
+This applies to `AUDIO`, `HTTP`, `HTTPADV`, `HTTPCONTENT`, `HTTPPARSE`, `MONGODB`, `PGSQL`, `REDIS` and `SSL` checks.
+
+NodePing makes these changes:
+
+- It changes the scheme and host to lower case.
+- It adds `/` to an empty path.
+
+For example, NodePing stores `https://EXAMPLE.com` as `https://example.com/`.
+The provider recognizes these changes and does not show them as a difference. Thus both spellings are stable in your configuration.
+
+The provider removes leading and trailing spaces from the target for all check types.
+Other types keep the target exactly as you write it.
+`WEBSOCKET`, `FTP`, `RDAP`, `SIP` and `WHOIS` accept a URL, but NodePing does not change it.
+
+The provider does not copy two NodePing changes: punycode for a non-ASCII host, and percent-encoding of non-ASCII path bytes.
+For such a target, the first plan shows a difference. The difference goes away after one apply.
+
+After an import, state holds the canonical target that NodePing returns.
+If your configuration has a different spelling, the next plan is still empty.
+
+## Interval Minimums
+
+NodePing replaces a `WHOIS` interval below 240 minutes with 1440.
+It replaces an `RDAP` interval below 60 minutes with 1440.
+
+> **CAUTION:** Such a value never matches state, so the plan always shows a change. The provider stops it with a plan error.
+
+If you do not set `interval` for a `WHOIS` or `RDAP` check, the provider plans 1440.
+
+## Type Applicability
+
+Some attributes apply only to some check types.
+If you set one on a different type, the provider reports it at plan time.
+
+| Attributes | Check types | Result on a different type |
+|---|---|---|
+| `contentstring` | `HTTPCONTENT`, `HTTPADV`, `HTTPPARSE`, `DNS`, `DOHDOT` | Warning |
+| `regex`, `invert` | `HTTPCONTENT`, `HTTPADV`, `HTTPPARSE`, `DNS`, `DOHDOT` | Error if `true` |
+| `dnstype`, `dnstoresolve`, `dnssection` | `DNS`, `DOHDOT` | Warning |
+| `dnsrd` | `DNS`, `DOHDOT` | Error if `true` |
+| `warningdays` | `SSL`, `WHOIS`, `RDAP`, `SMTP`, `IMAP4`, `POP3`, `DOHDOT`, `SPEC10RDDS` | Warning |
+
+The boolean flags accept `false` on all types.
+NodePing stores them as `false` on each check type and returns them on read.
+Without this rule, an imported `PUSH` check does not validate.
+
+The other attributes cause only a warning.
+NodePing keeps these values when a check changes type, and it returns them on read.
+An error makes such checks impossible to import.
+
+`SPEC10DNS` checks keep none of the four DNS attributes.
+
+## Request Headers
+
+`sendheaders` is not marked sensitive. Its values show in plan output and in generated configuration.
+This is intentional. `tofu plan -generate-config-out` writes a sensitive map as `null`. An apply of that output deletes the live headers.
+
+> **SECURITY:** If a header contains a credential, encrypt the state. Limit who can read the plan output.
+
+## Supported Check Types
+
+| Type | Description | `target` required |
+|------|-------------|-------------------|
+| `AGENT` | NodePing Agent check | No |
+| `AUDIO` | Audio stream check | Yes |
+| `CLUSTER` | Cluster of checks | No |
+| `DNS` | DNS resolution check | No |
+| `DOHDOT` | DNS over HTTPS or TLS | Yes |
+| `FTP` | FTP server check | Yes |
+| `HTTP` | HTTP or HTTPS check | Yes |
+| `HTTPADV` | Advanced HTTP check | Yes |
+| `HTTPCONTENT` | HTTP content match | Yes |
+| `HTTPPARSE` | HTTP response parsing | Yes |
+| `IMAP4` | IMAP mail server | Yes |
+| `MONGODB` | MongoDB database | Yes |
+| `MTR` | MTR traceroute | Yes |
+| `MYSQL` | MySQL database | Yes |
+| `NTP` | NTP time server | Yes |
+| `PGSQL` | PostgreSQL database | Yes |
+| `PING` | ICMP ping | Yes |
+| `POP3` | POP3 mail server | Yes |
+| `PORT` | TCP port check | Yes |
+| `PUSH` | Push-based check | No |
+| `RBL` | Real-time blocklist | Yes |
+| `RDAP` | RDAP domain lookup | Yes |
+| `RDP` | Remote Desktop | Yes |
+| `REDIS` | Redis database | Yes |
+| `SIP` | SIP VoIP check | Yes |
+| `SMTP` | SMTP mail server | Yes |
+| `SNMP` | SNMP check | Yes |
+| `SPEC10DNS` | SPEC10 DNS | No |
+| `SPEC10RDDS` | SPEC10 RDDS | No |
+| `SSH` | SSH server | Yes |
+| `SSL` | SSL certificate | Yes |
+| `WEBSOCKET` | WebSocket check | Yes |
+| `WHOIS` | WHOIS domain lookup | Yes |
 
 ## Notes
 
-- Check IDs are generated by NodePing and cannot be set manually.
-- Sub-minute intervals (0.25 and 0.5) may incur additional fees.
-- The `dep` (dependency) feature prevents notifications when the dependent check is failing.
-- Importing a check never brings a credential with it: `password_wo`, `password`, and any
-  `hosts[*].password` are left null so that the plaintext NodePing returns cannot land in state.
+- **Zero values:** The provider sends a `0` in `sens`, `statuscode`, `warningdays` or `volumemin` as the string `"0"`. NodePing reads a numeric `0` as empty.
+- **Length limits:** NodePing enforces no length limit on `label`, `target`, `contentstring` or `postdata`. The provider sets its own limits, far above the values in typical use.
+- **Fees:** Sub-minute intervals (`0.25` and `0.5`) can incur additional fees.
+- **Deleted outside OpenTofu:** If NodePing cannot find the check on refresh, the provider removes it from state. The next plan creates it again.
+- **Failed create:** If NodePing creates the check but a later step fails, the provider writes the check ID to state. The next apply or destroy can then manage the check.

@@ -2,12 +2,18 @@
 page_title: "nodeping_notificationprofiles Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches all NodePing notification profiles.
+  Reads all NodePing notification profiles, sorted by profile ID.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_notificationprofiles (Data Source)
 
-Fetches all NodePing notification profiles, ordered by profile ID.
+Reads all NodePing notification profiles in one account.
 
 ## Example Usage
 
@@ -19,7 +25,7 @@ output "profile_names" {
 }
 ```
 
-Look profiles up on a subaccount:
+### Find a profile by name in a subaccount
 
 ```hcl
 data "nodeping_notificationprofiles" "client" {
@@ -36,14 +42,16 @@ locals {
 
 ## Argument Reference
 
-- `customer_id` - (Optional) The subaccount (customer) ID to list profiles for.
-  Defaults to the account the provider is configured for.
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `customer_id` | No | The ID of the account to list. Set `customer_id` to list the objects of a subaccount. If you do not set it, the provider uses its own `customer_id`, or the account of the API token. |
 
 ## Attribute Reference
 
-- `profiles` - Notification profiles, ordered by ID. Each entry contains:
-  - `id` - The unique identifier of the notification profile.
-  - `customer_id` - The customer ID (account ID) that owns the profile.
-  - `name` - The name of the notification profile.
-  - `notifications` - Notification targets belonging to the profile. Each entry
-    contains `contact_id`, `delay` and `schedule`.
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `profiles` | List of Object | The notification profiles, sorted by profile ID. |
+| `profiles[].id` | String | The ID of the notification profile. |
+| `profiles[].customer_id` | String | The ID of the account that owns the profile. |
+| `profiles[].name` | String | The name of the notification profile. |
+| `profiles[].notifications` | List of Object | The notification targets. Each target has `contact_id`, `delay` and `schedule`, as in [`nodeping_notificationprofile`](nodeping_notificationprofile.md). |

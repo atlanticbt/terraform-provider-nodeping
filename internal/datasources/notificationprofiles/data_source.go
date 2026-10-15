@@ -10,8 +10,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofile"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/datasources/notificationprofile"
 )
 
 var (

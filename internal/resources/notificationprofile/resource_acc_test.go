@@ -14,7 +14,7 @@
 //	TF_ACC_PROVIDER_NAMESPACE=hashicorp \
 //	go test -tags acc ./internal/resources/notificationprofile/...
 //
-// Per CLAUDE.md the tests run against the tofu binary and a dedicated NodePing
+// Per CONTRIBUTING.md the tests run against the tofu binary and a dedicated NodePing
 // test subaccount, never a client subaccount and never the main account.
 package notificationprofile_test
 
@@ -27,7 +27,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/provider"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/provider"
 )
 
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){

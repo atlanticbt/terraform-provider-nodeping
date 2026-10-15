@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-log/tflogtest"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 // providerSchema returns the provider schema under test.
@@ -442,7 +442,7 @@ func TestProviderConfigure_tuningAttributes(t *testing.T) {
 			},
 		},
 		{
-			name: "zero values fall back to client defaults",
+			name: "zero retry values are accepted",
 			attrs: configAttrs{
 				"api_token":      "token",
 				"rate_limit":     0.0,
@@ -708,6 +708,19 @@ func exercise(t *testing.T, c *client.Client) {
 	}
 }
 
+// NODEPING_API_KEY was once read as a silent fallback. A credential source the
+// documentation never mentions can pick up a more privileged token from a shell
+// that happens to export one under that common name, so it is not read at all.
+func TestProviderConfigure_shouldIgnoreNodepingAPIKey(t *testing.T) {
+	clearNodePingEnv(t)
+	t.Setenv("NODEPING_API_KEY", "legacy-token")
+
+	resp := configure(t, context.Background(), nil)
+	if !hasErrorSummary(t, resp, "Missing NodePing API Token") {
+		t.Errorf("NODEPING_API_KEY alone must not configure a token, got %v", resp.Diagnostics)
+	}
+}
+
 func TestProviderConfigure_apiTokenPrecedence(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -728,18 +741,13 @@ func TestProviderConfigure_apiTokenPrecedence(t *testing.T) {
 			want:     "token-from-env",
 		},
 		{
-			name:      "NODEPING_API_KEY is honoured as a fallback",
-			envAPIKey: "legacy-token",
-			want:      "legacy-token",
-		},
-		{
-			name:      "NODEPING_API_TOKEN beats NODEPING_API_KEY",
+			name:      "NODEPING_API_KEY is ignored when NODEPING_API_TOKEN is set",
 			envToken:  "primary-token",
 			envAPIKey: "legacy-token",
 			want:      "primary-token",
 		},
 		{
-			name:        "provider block beats both environment variables",
+			name:        "provider block beats NODEPING_API_TOKEN and ignores NODEPING_API_KEY",
 			envToken:    "token-from-env",
 			envAPIKey:   "legacy-token",
 			configToken: "token-from-config",
@@ -925,5 +933,30 @@ func TestProviderConfigure_malformedConfigIsRejected(t *testing.T) {
 
 	if resp.ResourceData != nil || resp.DataSourceData != nil {
 		t.Error("no client must be handed out when the config could not be decoded")
+	}
+}
+
+// The schema and docs say max_retries = 0 disables retries and that 0 is a valid
+// wait. Those values must reach the client unchanged instead of being replaced
+// by the defaults.
+func TestProviderConfigure_shouldPassZeroRetrySettingsThrough(t *testing.T) {
+	clearNodePingEnv(t)
+	c := configuredClient(t, configure(t, context.Background(), configAttrs{
+		"api_token":      "token",
+		"max_retries":    int64(0),
+		"retry_wait_min": int64(0),
+		"retry_wait_max": int64(0),
+	}))
+	if got := c.RetryPolicy(); got != (client.RetryPolicy{}) {
+		t.Errorf("zero retry settings reached the client as %+v, want all zero", got)
+	}
+}
+
+func TestProviderConfigure_shouldUseRetryDefaultsWhenUnset(t *testing.T) {
+	clearNodePingEnv(t)
+	c := configuredClient(t, configure(t, context.Background(), configAttrs{"api_token": "token"}))
+	want := client.RetryPolicy{MaxRetries: client.DefaultMaxRetries, MinWait: client.DefaultRetryMinWait, MaxWait: client.DefaultRetryMaxWait}
+	if got := c.RetryPolicy(); got != want {
+		t.Errorf("unset retry settings reached the client as %+v, want %+v", got, want)
 	}
 }

@@ -1,14 +1,37 @@
-# Notification Dependency (dep)
+<!--
+doc: guide
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
+
+# Notification Dependency (`dep`)
 
 ## Overview
 
-The `dep` (notification dependency) attribute allows you to create hierarchical monitoring relationships where notifications for a check are suppressed when a dependent check is failing. This is particularly useful for reducing alert noise when core infrastructure fails.
+The `dep` attribute makes one check depend on a different check. When the parent check
+fails, NodePing sends no notifications for the dependent check. Use `dep` to decrease alert
+noise when core infrastructure fails.
 
-## Use Cases
+| Term | Meaning |
+|---|---|
+| Parent check | The check that `dep` refers to. For example, a router check. |
+| Dependent check | The check that has the `dep` attribute. For example, a web server behind the router. |
 
-### 1. Network Infrastructure Dependencies
+## Behavior
 
-When a router or network device fails, all services behind it will also fail. Instead of receiving alerts for every service, you can suppress notifications for dependent services when the router is down.
+| State of the parent check | Result for the dependent check |
+|---|---|
+| Passing | The dependent check operates normally. NodePing sends notifications for its own status. |
+| Failing | The dependent check continues to run. NodePing updates its status. **NodePing sends no notifications for it.** |
+| Recovered | The dependent check sends notifications again. If it still fails, NodePing sends a notification. |
+
+## Examples
+
+### Network infrastructure
+
+A router failure causes all services behind it to fail. Make each service depend on the
+router. Then you get one alert for the router, not one alert for each service.
 
 ```hcl
 resource "nodeping_check" "edge_router" {
@@ -27,17 +50,17 @@ resource "nodeping_check" "web_server" {
 }
 ```
 
-### 2. Database Dependencies
+### Database
 
-Application checks can depend on database availability:
+An application check can depend on a database check:
 
 ```hcl
 resource "nodeping_check" "database" {
-  type     = "PORT"
-  target   = "db.example.com"
-  label    = "PostgreSQL Database"
-  enabled  = true
-  port     = 5432
+  type    = "PORT"
+  target  = "db.example.com"
+  label   = "PostgreSQL Database"
+  enabled = true
+  port    = 5432
 }
 
 resource "nodeping_check" "api" {
@@ -49,12 +72,12 @@ resource "nodeping_check" "api" {
 }
 ```
 
-### 3. Multi-Tier Application Stack
+### Application with three tiers
 
-Create a dependency chain for complex applications:
+Each tier depends on the tier below it:
 
 ```hcl
-# Layer 1: Network
+# Tier 1: network
 resource "nodeping_check" "vpn" {
   type    = "PING"
   target  = "vpn.example.com"
@@ -62,7 +85,7 @@ resource "nodeping_check" "vpn" {
   enabled = true
 }
 
-# Layer 2: Database (depends on network)
+# Tier 2: database, depends on the network
 resource "nodeping_check" "database" {
   type    = "PGSQL"
   target  = "db.internal.example.com"
@@ -71,7 +94,7 @@ resource "nodeping_check" "database" {
   dep     = nodeping_check.vpn.id
 }
 
-# Layer 3: Application (depends on database)
+# Tier 3: application, depends on the database
 resource "nodeping_check" "app" {
   type    = "HTTP"
   target  = "https://app.internal.example.com"
@@ -81,68 +104,41 @@ resource "nodeping_check" "app" {
 }
 ```
 
-## Behavior
-
-### When Dependency Check is Passing
-- Dependent check operates normally
-- Notifications are sent based on the check's own status
-
-### When Dependency Check is Failing
-- Dependent check continues to run
-- **No notifications are sent** for the dependent check
-- Check status is still updated in NodePing
-
-### When Dependency Check Recovers
-- Dependent check resumes normal notification behavior
-- If dependent check is still failing, notifications will be sent
-
 ## Configuration
 
-### Setting a Dependency
+### Add a dependency
 
-```hcl
-resource "nodeping_check" "dependent" {
-  type    = "HTTP"
-  target  = "https://example.com"
-  label   = "Dependent Check"
-  enabled = true
-  dep     = nodeping_check.primary.id  # Reference to primary check
-}
-```
+1. Set `dep` to the ID of the parent check:
 
-### Removing a Dependency
+   ```hcl
+   dep = nodeping_check.primary.id
+   ```
 
-To remove a dependency, simply remove the `dep` attribute:
+2. Run `tofu plan`. Make sure that the plan changes only `dep`.
+3. Run `tofu apply`.
 
-```hcl
-resource "nodeping_check" "dependent" {
-  type    = "HTTP"
-  target  = "https://example.com"
-  label   = "Dependent Check"
-  enabled = true
-  # dep attribute removed - check is now independent
-}
-```
+### Remove a dependency
 
-### Changing a Dependency
+1. Delete the `dep` line from the check.
+2. Run `tofu plan`. Make sure that the plan shows `dep` as removed.
+3. Run `tofu apply`. The provider sends the removal to NodePing.
 
-Update the `dep` attribute to reference a different check:
+`dep` is an Optional attribute without a computed value. Thus a removal always shows in the
+plan.
 
-```hcl
-resource "nodeping_check" "dependent" {
-  type    = "HTTP"
-  target  = "https://example.com"
-  label   = "Dependent Check"
-  enabled = true
-  dep     = nodeping_check.new_primary.id  # Changed dependency
-}
-```
+### Change a dependency
 
-## Reading Dependency Information
+1. Set `dep` to the ID of the new parent check:
 
-### Using Data Sources
+   ```hcl
+   dep = nodeping_check.new_primary.id
+   ```
 
-You can read the `dep` value from existing checks:
+2. Run `tofu plan`, then `tofu apply`.
+
+## Read dependency information
+
+### One check
 
 ```hcl
 data "nodeping_check" "existing" {
@@ -154,7 +150,7 @@ output "dependency_check_id" {
 }
 ```
 
-### Listing Checks with Dependencies
+### All checks that have a dependency
 
 ```hcl
 data "nodeping_checks" "all" {}
@@ -167,39 +163,35 @@ output "checks_with_dependencies" {
 }
 ```
 
-## Best Practices
+## Rules
 
-### 1. Avoid Circular Dependencies
+| Rule | Reason |
+|---|---|
+| Do not make a circular dependency. | Two checks that depend on each other can hide both failures. |
+| Use `dep` for infrastructure, not for application logic. | A router and the services behind it is a good use. Two microservices that call each other is a bad use. |
+| Keep dependency chains short: 1 or 2 levels. | A long chain makes it hard to find the real failure. |
+| Write a comment for each dependency. | The next engineer must know why an alert did not come. |
 
-❌ **Don't do this:**
+Example of a circular dependency. **Do not do this:**
+
 ```hcl
 resource "nodeping_check" "a" {
-  type = "HTTP"
+  type   = "HTTP"
   target = "https://a.example.com"
-  dep = nodeping_check.b.id
+  dep    = nodeping_check.b.id
 }
 
 resource "nodeping_check" "b" {
-  type = "HTTP"
+  type   = "HTTP"
   target = "https://b.example.com"
-  dep = nodeping_check.a.id  # Circular dependency!
+  dep    = nodeping_check.a.id # circular
 }
 ```
 
-### 2. Use for Infrastructure, Not Application Logic
-
-✅ **Good use case:** Router → Services behind router
-❌ **Poor use case:** Microservice A → Microservice B (application-level dependencies)
-
-### 3. Keep Dependency Chains Short
-
-✅ **Recommended:** 1-2 levels deep
-❌ **Not recommended:** 5+ levels deep
-
-### 4. Document Your Dependencies
+Example with comments:
 
 ```hcl
-# Core infrastructure check - all internal services depend on this
+# Core infrastructure. All internal services depend on this check.
 resource "nodeping_check" "core_router" {
   type    = "PING"
   target  = "10.0.0.1"
@@ -207,45 +199,47 @@ resource "nodeping_check" "core_router" {
   enabled = true
 }
 
-# Internal service - depends on core router
+# Internal service. NodePing sends no alerts for it when the router is down.
 resource "nodeping_check" "internal_api" {
   type    = "HTTP"
   target  = "https://api.internal.example.com"
   label   = "Internal API"
   enabled = true
-  dep     = nodeping_check.core_router.id  # Suppress alerts when router is down
+  dep     = nodeping_check.core_router.id
 }
 ```
 
 ## Limitations
 
-1. **Single Dependency Only**: Each check can only have one `dep` value
-2. **No Automatic Validation**: Terraform doesn't validate that the referenced check exists in NodePing
-3. **API Limitation**: The NodePing API controls the actual dependency behavior
+| Limitation | Description |
+|---|---|
+| One dependency only | A check can have one `dep` value only. |
+| No existence check | The provider does not make sure that the parent check exists in NodePing. |
+| API behavior | NodePing controls the dependency behavior, not the provider. |
 
 ## Troubleshooting
 
-### Dependency Not Working
+### The dependency does not suppress notifications
 
-1. Verify the check ID is correct:
-   ```bash
-   terraform state show nodeping_check.primary
+1. Make sure that the parent check ID is correct:
+
+   ```sh
+   tofu state show nodeping_check.primary
    ```
 
-2. Check that both checks are in the same account/subaccount
+2. Make sure that both checks are in the same account or subaccount.
+3. Make sure that the parent check is enabled.
 
-3. Verify the dependency check is enabled
+### Import a check that has a dependency
 
-### Import Existing Checks with Dependencies
+1. Import the check:
 
-When importing checks that have dependencies:
+   ```sh
+   tofu import nodeping_check.dependent 201205050153W2Q4C-0J2HSIRF
+   ```
 
-```bash
-terraform import nodeping_check.dependent 201205050153W2Q4C-0J2HSIRF
-```
+2. The provider reads `dep` from the API. You do not set it manually.
 
-The `dep` value will be automatically imported from the API.
+## API reference
 
-## API Reference
-
-For more information, see the [NodePing API documentation](https://nodeping.com/docs-api-checks.html) under the `dep` parameter.
+See the `dep` parameter in the [NodePing API documentation](https://nodeping.com/docs-api-checks.html).

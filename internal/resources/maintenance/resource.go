@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
 	"sort"
 	"strings"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 var (
@@ -111,7 +112,7 @@ func (r *MaintenanceResource) Create(ctx context.Context, req resource.CreateReq
 		"id": maint.Identifier(),
 	})
 
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -150,7 +151,7 @@ func (r *MaintenanceResource) Read(ctx context.Context, req resource.ReadRequest
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -214,7 +215,7 @@ func (r *MaintenanceResource) Update(ctx context.Context, req resource.UpdateReq
 	// re-states the same values -- but on a resource created before the core
 	// supported identity there is no stored identity yet, and the framework
 	// rejects an update that leaves it null.
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -246,28 +247,13 @@ func (r *MaintenanceResource) Delete(ctx context.Context, req resource.DeleteReq
 }
 
 func (r *MaintenanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	var maintenanceID string
-	var customerID string
-
 	// An "identity" import block is handled first; anything else is the
 	// established string form, which must keep working unchanged.
-	if idFromIdentity, customerFromIdentity, fromIdentity := identityImportValues(ctx, req, &resp.Diagnostics); fromIdentity {
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if idFromIdentity == "" {
-			resp.Diagnostics.AddError(
-				"Invalid Import Identity",
-				"The 'id' attribute of the import identity must be a non-empty maintenance window ID.",
-			)
-			return
-		}
-		maintenanceID = idFromIdentity
-		customerID = customerFromIdentity
-	} else {
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	maintenanceID, customerID, fromIdentity := identity.FromImport(ctx, req, &resp.Diagnostics, "maintenance window")
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !fromIdentity {
 
 		var parseErr error
 		maintenanceID, customerID, parseErr = parseImportID(req.ID)
@@ -329,14 +315,14 @@ func (r *MaintenanceResource) ImportState(ctx context.Context, req resource.Impo
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
 // parseImportID accepts "MAINTID" and "CUSTOMERID:MAINTID".
 func parseImportID(raw string) (maintenanceID, customerID string, err error) {
-	const usage = "Expected import ID in format 'maintenance_id' or 'customer_id:maintenance_id', got: %q"
+	const usage = "expected import ID in format 'maintenance_id' or 'customer_id:maintenance_id', got: %q"
 
 	parts := strings.Split(raw, ":")
 	switch len(parts) {

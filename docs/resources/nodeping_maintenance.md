@@ -4,89 +4,22 @@ subcategory: ""
 description: |-
   Manages a scheduled NodePing maintenance window.
 ---
+<!--
+doc: registry-resource
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_maintenance (Resource)
 
 Manages a scheduled NodePing maintenance window.
+A maintenance disables the checks in `checklist` at the time that `cron` sets.
+The checks stay disabled for `duration` minutes, then NodePing enables them again.
+Use a maintenance to stop alerts during planned deployments, patches, or backups.
 
-A maintenance window disables the checks listed in `checklist` on the schedule
-given by `cron`, leaves them disabled for `duration` minutes, then re-enables
-them. Use it to stop alerting during planned deployments, patching, or backups.
-
-## Ad-hoc maintenance is not supported, on purpose
-
-NodePing's API also accepts *ad-hoc* maintenance: post `id = "ad-hoc"` and the
-window starts immediately. **NodePing deletes the record as soon as the window
-finishes running.**
-
-That behaviour is incompatible with declarative state. A resource whose object
-deletes itself looks like drift on the next refresh, so OpenTofu removes it from
-state and the next apply recreates it — which opens another maintenance window,
-which is deleted again. The result is a loop that repeatedly disables the
-account's monitoring, on every plan/apply cycle, without anyone asking for it.
-
-This resource therefore:
-
-- requires `cron`, so every window it manages is a scheduled one;
-- never sends `id = "ad-hoc"` on create, and errors out if the API returns an
-  ad-hoc record;
-- refuses to import an ad-hoc window, or any window with no `cron` expression.
-
-Ad-hoc maintenance is an imperative operation — "silence these checks, now" —
-and belongs in the NodePing UI, a `curl` call, or a runbook script, not in
-state. The `nodeping_maintenance` and `nodeping_maintenances` data sources will
-still report an ad-hoc window for as long as one exists.
-
-### Running one from OpenTofu anyway
-
-If you need to open an ad-hoc window as part of an apply — silencing checks
-around a deploy, say — drive it imperatively with `terraform_data` and a
-provisioner. This deliberately keeps the window out of provider state, so the
-recreate loop described above cannot occur.
-
-`scripts/nodeping-adhoc-maintenance.sh` in this repository does the API call
-with input validation and error handling:
-
-```hcl
-resource "terraform_data" "deploy_window" {
-  # Each new value opens exactly one new window. Use something that changes
-  # once per deploy -- an image tag, a release id -- not `timestamp()`, which
-  # would fire on every plan.
-  triggers_replace = [var.release_version]
-
-  provisioner "local-exec" {
-    command = "${path.module}/scripts/nodeping-adhoc-maintenance.sh --duration 15 --checks ${join(",", local.deploy_check_ids)}"
-
-    # The token goes in the environment, never in `command`. Anything
-    # interpolated into the command string is visible in `ps` output on the
-    # machine running the apply.
-    environment = {
-      NODEPING_API_TOKEN   = var.nodeping_api_token
-      NODEPING_CUSTOMER_ID = var.subaccount_id
-    }
-  }
-}
-```
-
-Caveats worth understanding before using this:
-
-- **Provisioners are a last resort**, and this is one of the few cases that
-  genuinely qualifies: there is no declarative way to express a fire-and-forget
-  action. OpenTofu has no equivalent of Terraform's `action` blocks and has
-  signalled it may diverge rather than adopt them
-  ([opentofu#3309](https://github.com/opentofu/opentofu/issues/3309)), so this
-  workaround is not obviously temporary.
-- **Nothing is tracked.** OpenTofu does not know the window exists, cannot show
-  it in a plan, and will not close it early. Use the data sources to observe it.
-- **`triggers_replace` is stored in state.** Never interpolate a secret into it.
-  The `environment` block is not persisted; the `command` string is not
-  persisted either, but it *is* visible in the process table while running.
-- **It runs on the machine doing the apply**, which needs `bash` and `curl`.
-- **Failure fails the apply.** Add `on_failure = continue` if opening a
-  maintenance window should not block a deploy.
-
-Replace this with a first-class resource if and when OpenTofu ships an actions
-equivalent.
+This resource manages scheduled maintenance only. It does not manage ad-hoc maintenance.
+To start an ad-hoc maintenance from OpenTofu, see [Ad-hoc maintenance](#ad-hoc-maintenance).
 
 ## Example Usage
 
@@ -104,11 +37,11 @@ resource "nodeping_maintenance" "weekly_patching" {
 }
 ```
 
-### Temporarily disabling a schedule
+### Disable a schedule for a period
 
-Set `enabled = false` to keep the definition but stop it from firing. The value
-is always sent to the API, so re-enabling it later takes effect on the next
-apply.
+Set `enabled = false` to keep the definition and stop the schedule.
+The provider always sends `enabled` to the API.
+Thus, when you set it to `true` again, the next apply starts the schedule again.
 
 ```hcl
 resource "nodeping_maintenance" "quarterly_dr_test" {
@@ -120,7 +53,7 @@ resource "nodeping_maintenance" "quarterly_dr_test" {
 }
 ```
 
-### SubAccount window
+### Maintenance in a subaccount
 
 ```hcl
 resource "nodeping_maintenance" "client_patching" {
@@ -132,64 +65,179 @@ resource "nodeping_maintenance" "client_patching" {
 }
 ```
 
-## Argument Reference
+## Schema
 
-- `name` - (Required) Friendly name for the maintenance window. 1-255 characters.
-- `cron` - (Required) Standard 5-field cron expression, `minute hour day-of-month
-  month day-of-week`, giving the start time of the window in the account's
-  timezone. Ranges (`8-17`), lists (`0,30`), steps (`*/15`), `?` in the two day
-  fields, and three-letter month/day names (`JAN`, `MON`) are accepted.
-  Six-field (seconds) and non-standard expressions are rejected at plan time.
-- `duration` - (Required) How long the checks stay disabled, in minutes. Minimum
-  1, maximum 527040 (roughly one year). The upper bound exists because a value
-  that large is nearly always a units mistake that would disable monitoring
-  indefinitely.
-- `checklist` - (Required) Set of check IDs to disable for the duration of the
-  window. Order is not significant. At least one entry.
-- `enabled` - (Optional) Whether the schedule is active. Defaults to `true`.
-- `customer_id` - (Optional) Customer ID (SubAccount ID) that owns the window.
-  Set this to manage a window belonging to a SubAccount. Changing it forces a
-  new window to be created.
+### Required
 
-## Attribute Reference
+- `name` (String) The name of the maintenance. Length 1 to 255 characters.
+- `cron` (String) A standard 5-field cron expression that sets the start time, in the timezone of the account. See [Cron syntax](#cron-syntax). The provider validates it at plan time.
+- `duration` (Number) The time that the checks stay disabled, in minutes. Range 1 to 527040 (about one year). A larger value is almost always a units mistake, and it disables monitoring for too long.
+- `checklist` (Set of String) The IDs of the checks to disable. The order is not significant. 1 to 5000 entries. Each entry must not be empty.
 
-- `id` - The unique identifier assigned by NodePing (a short string such as
-  `9VKOB`).
-- `processing` - `true` while NodePing is currently running this window.
-- `nextrun` - Unix timestamp in milliseconds of the next scheduled run.
+### Optional
 
-The API's `history` field — the ten most recent runs — is deliberately **not**
-exposed on this resource. It changes every time the window runs, so a computed
-attribute tracking it would rewrite state and show "known after apply" churn on
-every plan while carrying no information the practitioner can act on. Read it
-through the `nodeping_maintenance` data source instead, where a changing value
-costs nothing.
+- `enabled` (Boolean) If `true`, the schedule is active. A disabled maintenance does not run. Default `true`.
+- `customer_id` (String) The customer ID of the subaccount that owns the maintenance. Set it to manage a maintenance in a subaccount. If you do not set it, the provider uses its own `customer_id`, or the account of the API token. Changing it forces replacement.
+
+### Read-Only
+
+- `id` (String) The ID that NodePing assigns, for example `9VKOB`.
+- `processing` (Boolean) `true` while NodePing runs the maintenance.
+- `nextrun` (Number) The time of the next scheduled run, in milliseconds since the Unix epoch.
+
+This resource does not show the `history` field of the API (the ten most recent runs).
+The value changes at each run.
+On a resource, that change rewrites state and adds noise to each plan.
+To read the history, use the [`nodeping_maintenance`](../data-sources/nodeping_maintenance.md) data source.
+
+### Cron syntax
+
+The expression must have exactly 5 fields, separated by whitespace:
+
+| Position | Field | Values |
+|---|---|---|
+| 1 | minute | `0`-`59` |
+| 2 | hour | `0`-`23` |
+| 3 | day of month | `1`-`31`, or `?` |
+| 4 | month | `1`-`12`, or `JAN`-`DEC` |
+| 5 | day of week | `0`-`7` (`0` and `7` are Sunday), `SUN`-`SAT`, or `?` |
+
+Each field accepts these forms:
+
+- `*` for all values.
+- A single value, for example `5` or `MON`. Names are not case-sensitive.
+- A range, for example `8-17`. The start must not be greater than the end.
+- A list, for example `0,30`.
+- A step after a base value, for example `*/15` or `0-30/10`. The step must be from 1 to the maximum value of the field.
+
+The provider rejects a 6-field expression (with seconds), non-standard macros such as `@daily`, and control characters.
 
 ## Import
 
-Maintenance windows are imported by ID:
+Import a maintenance in the account of the API token by its ID:
 
 ```shell
-terraform import nodeping_maintenance.weekly_patching 9VKOB
+tofu import nodeping_maintenance.weekly_patching 9VKOB
 ```
 
-For SubAccount windows, use `customer_id:maintenance_id`:
+To import a maintenance in a subaccount, use `customer_id:maintenance_id`:
 
 ```shell
-terraform import nodeping_maintenance.weekly_patching 201205050153W2Q4C:9VKOB
+tofu import nodeping_maintenance.weekly_patching 201205050153W2Q4C:9VKOB
 ```
 
-The imported `customer_id` is written to state and used for every subsequent API
-call for this resource. Set `customer_id` in your configuration to match,
-otherwise the next plan shows a replacement.
+With OpenTofu 1.12 or later, you can also use an `import` block with an `identity`.
+The identity has two attributes: `id` (required) and `customer_id` (optional).
+Do not set `customer_id` for a maintenance in the account of the API token.
 
-Importing `ad-hoc`, or any window that has no `cron` expression, fails with an
-explanatory error rather than creating a resource that cannot be maintained.
+```hcl
+import {
+  to = nodeping_maintenance.weekly_patching
+  identity = {
+    id          = "9VKOB"
+    customer_id = "201205050153W2Q4C"
+  }
+}
+```
 
-## Drift and out-of-band deletion
+The import writes `customer_id` to state.
+If you do not supply it, the provider uses the value that the API returns.
+All later API calls for the resource use this value.
 
-If a scheduled window is deleted in the NodePing UI, the next refresh removes it
-from state and the next apply recreates it. That is the correct behaviour for a
-window that only disappears because a human deleted it — which is why the
-resource refuses to manage ad-hoc windows, whose disappearance means nothing of
-the sort.
+> **CAUTION:** Set `customer_id` in the configuration to the imported value. If you omit it or set a different value, a later plan can replace the maintenance.
+
+The import fails for an ad-hoc maintenance.
+It also fails for a maintenance that has no `cron` expression.
+The error message tells you the cause.
+
+## Ad-hoc maintenance
+
+NodePing also accepts ad-hoc maintenance.
+A request with `id = "ad-hoc"` starts a maintenance immediately.
+**NodePing deletes the record when the maintenance ends.**
+
+This behavior does not agree with declarative state.
+When the record deletes itself, the next refresh removes it from state.
+Then the next apply creates it again, and that starts a new maintenance.
+NodePing deletes that record too, and the loop continues.
+Each cycle disables the monitoring of the account, and nobody asked for it.
+
+Thus this resource has these limits:
+
+- It requires `cron`, so each maintenance that it manages is a scheduled one.
+- It never sends `id = "ad-hoc"`. If the API returns an ad-hoc record on create, the create fails.
+- It does not update a maintenance with the ID `ad-hoc`.
+- It does not import an ad-hoc maintenance, or a maintenance without a `cron` expression.
+
+An ad-hoc maintenance is an imperative operation: "disable these checks now".
+Start it from the NodePing UI, an API call, or a script.
+The [`nodeping_maintenance`](../data-sources/nodeping_maintenance.md) and [`nodeping_maintenances`](../data-sources/nodeping_maintenances.md) data sources show an ad-hoc maintenance while it exists.
+
+### Start an ad-hoc maintenance from OpenTofu
+
+You can start an ad-hoc maintenance as part of an apply, for example around a deploy.
+Use a `terraform_data` resource with a `local-exec` provisioner.
+The maintenance does not go into provider state, so the loop above cannot occur.
+
+The script `scripts/nodeping-adhoc-maintenance.sh` in this repository sends the API request.
+It validates its input before it calls the API:
+
+| Input | Rule |
+|---|---|
+| `--duration` (required) | An integer from 1 to 527040 minutes. |
+| `--checks` (required) | Comma-separated check IDs. Letters, digits and hyphens only. 1 to 5000 IDs. |
+| `--name` (optional) | Letters, digits and `_ . : -` only. 255 characters or fewer. The default is `adhoc-<UTC timestamp>`. |
+| `NODEPING_API_TOKEN` (required) | The API token. |
+| `NODEPING_CUSTOMER_ID` (optional) | The customer ID of a subaccount. Letters, digits and hyphens only. |
+| `NODEPING_API_URL` (optional) | The API base URL. It must use `https`, or `http` to `localhost` or `127.0.0.1` for tests. |
+
+The script fails if the API returns an error in the response body or a non-2xx HTTP status.
+
+To use the recipe, do these steps:
+
+1. Copy the script into your module, for example to `scripts/` below the module root.
+2. Add a `terraform_data` resource like the example below.
+3. Set `triggers_replace` to a value that changes once for each deploy.
+4. Supply the API token through the `environment` block.
+
+> **SECURITY:** Put the API token in `environment`, not in `command`. Any value in the command string shows in the process list (`ps`) of the machine that runs the apply.
+
+```hcl
+resource "terraform_data" "deploy_window" {
+  # Each new value starts exactly one new maintenance. Use a value that
+  # changes once per deploy, such as an image tag or a release ID. Do not
+  # use timestamp(), because it changes at each plan.
+  triggers_replace = [var.release_version]
+
+  provisioner "local-exec" {
+    command = "${path.module}/scripts/nodeping-adhoc-maintenance.sh --duration 15 --checks ${join(",", local.deploy_check_ids)}"
+
+    # The token goes in the environment, never in `command`.
+    environment = {
+      NODEPING_API_TOKEN   = var.nodeping_api_token
+      NODEPING_CUSTOMER_ID = var.subaccount_id
+    }
+  }
+}
+```
+
+> **SECURITY:** OpenTofu stores `triggers_replace` in state. Do not put a secret in it.
+
+Read these limits before you use the recipe:
+
+- **Use provisioners only as a last resort.** This case qualifies, because no declarative form exists for a "fire and forget" action. OpenTofu has no equivalent of the Terraform `action` block, and it can choose not to add one ([opentofu#3309](https://github.com/opentofu/opentofu/issues/3309)).
+- **OpenTofu does not track the maintenance.** The plan does not show it, and OpenTofu does not end it early. Use the data sources to see it.
+- **The script runs on the machine that runs the apply.** That machine needs `bash` and `curl`.
+- **A script failure stops the apply.** If the maintenance must not block a deploy, add `on_failure = continue` to the provisioner.
+
+## Notes
+
+### Drift and deletion outside OpenTofu
+
+If a person deletes a scheduled maintenance in the NodePing UI, the next refresh removes it from state.
+The next apply then creates it again.
+This is correct for a scheduled maintenance, because only a person deletes it.
+An ad-hoc maintenance deletes itself, and that is why this resource does not manage ad-hoc maintenance.
+
+If the maintenance is deleted between the refresh and an update, the update fails.
+Run `tofu refresh`, or remove the resource with `tofu state rm`, then apply again.

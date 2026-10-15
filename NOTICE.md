@@ -1,10 +1,17 @@
+<!--
+doc: notice
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
+
 # Provenance and Attribution
 
 ## Origin
 
 This provider is an Atlantic BT fork of a third-party open-source project:
 
-| | |
+| Item | Value |
 |---|---|
 | Upstream | `github.com/phizzl/terraform-provider-nodeping` |
 | Upstream author | Phillip Schleicher |
@@ -12,37 +19,51 @@ This provider is an Atlantic BT fork of a third-party open-source project:
 | Upstream license | Mozilla Public License 2.0 |
 | Fork date | 2026-08-27 |
 
-**We did not author the original work and do not claim authorship of it.** The initial
-implementation — the plugin-framework resource layout, the NodePing API client, and the
-check and contact resources — is Phillip Schleicher's. Our fork begins from that work and
-diverges from it.
+**We did not write the original work, and we do not claim authorship of it.** Phillip
+Schleicher wrote the first implementation: the plugin framework resource layout, the
+NodePing API client, and the check and contact resources. Our fork starts from that work
+and is different from it now.
 
-The fork exists because we depend on this provider to manage production monitoring and
-need to control its release cadence, security posture, and test coverage. It is not a
-criticism of the upstream project.
+We made the fork for two reasons:
+
+1. **Supply chain control.** This provider manages production monitoring and handles API
+   tokens and check credentials. Atlantic BT controls merge permissions, reviews every
+   change, security-reviews changes to dependencies, token handling and the release
+   pipeline, and signs its own releases.
+2. **Extensions.** The fork adds the `nodeping_contactgroup`, `nodeping_schedule`,
+   `nodeping_notificationprofile`, `nodeping_maintenance` and `nodeping_subaccount`
+   resources, write-only check passwords that stay out of state, and input validation on
+   the provider configuration.
+
+The fork is not a criticism of the upstream project. We review upstream changes and take
+them through the process in [Relationship to Upstream](#relationship-to-upstream).
 
 ## License
 
-Upstream is MPL-2.0 and this fork remains MPL-2.0. The `LICENSE` file is unmodified.
-MPL-2.0 is file-level copyleft:
+The upstream project uses MPL-2.0, and this repository also uses MPL-2.0. The `LICENSE`
+file is not changed. This repository publishes the complete source under MPL-2.0. This
+includes each file that we changed from upstream.
 
-- Internal use is not distribution. Running this provider inside Atlantic BT triggers no
-  source-availability obligation.
-- If a modified binary is ever distributed outside Atlantic BT, the source of the modified
-  MPL-covered files must be made available. Raise this before any external release.
-- Upstream copyright headers in files we did not write are retained.
+MPL-2.0 is copyleft at the file level:
 
-## Relationship to upstream
+- Files from upstream, and changes to them, stay under MPL-2.0.
+- Upstream copyright notices stay in the files that we did not write.
 
-There is no shared git history. This repository begins at a single squashed initial
-commit, for the reason recorded in the security note below.
+## Relationship to Upstream
 
-Upstream is a single-maintainer public repository. We do not merge from it automatically.
-Changes are reviewed as a diff and adopted through the normal PR path, and any commit that
-adds a dependency, touches token handling, or changes the release pipeline additionally
-requires a security review. Adopted upstream changes are recorded here with the upstream
-commit they came from.
+This repository and upstream do not share git history. This repository starts with one
+initial commit. That commit contains the forked source at the upstream commit named
+above. The upstream history stays in the upstream repository.
 
-### Adopted from upstream since the fork
+Upstream is a public repository with one maintainer. We do not merge from it
+automatically:
+
+1. We review each upstream change as a diff.
+2. We take it through the normal pull request process.
+3. A change that adds a dependency, touches token handling or changes the release
+   pipeline also needs a security review.
+4. We record each adopted change here, with the upstream commit it came from.
+
+### Adopted from Upstream Since the Fork
 
 _None yet._

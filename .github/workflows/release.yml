@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  # A release is only built from a commit that is already on main, so an
+  # unreviewed commit cannot be tagged and published.
+  verify-tag:
+    name: verify-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tagged commit must be on main
+        run: |
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::${GITHUB_REF_NAME} points at a commit that is not on main"
+            exit 1
+          fi
+
+  # The full CI suite (lint, race tests, govulncheck, gitleaks) on the tagged
+  # commit, not only the unit tests.
+  ci:
+    name: ci
+    needs: verify-tag
+    uses: $/.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  release:
+    name: release
+    needs: [verify-tag, ci]
+    runs-on: ubuntu-latest
+    # The signing secrets live on the "release" environment, which only v* tags
+    # can deploy to. Branch and pull request runs cannot read them.
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod # the toolchain line in go.mod is the single source
+          # A restored build cache could inject code into a signed release.
+          cache: false
+      # The registries verify the SHA256SUMS signature against the public key
+      # registered for the namespace. See docs/releasing.md.
+      - name: Import release signing key
+        id: gpg
+        uses: crazy-max/ghaction-import-gpg@2dc316deee8e90f13e1a351ab510b4d5bc0c82cd # v7.0.0
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          # v2.18 and later need Go 1.27.
+          version: v2.17.1
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}

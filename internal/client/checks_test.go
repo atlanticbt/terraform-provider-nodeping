@@ -122,7 +122,8 @@ func TestGetCheckNotFound(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 
-	_, ok := err.(*NotFoundError)
+	var notFound *NotFoundError
+	ok := errors.As(err, &notFound)
 	if !ok {
 		t.Errorf("expected *NotFoundError, got %T", err)
 	}
@@ -262,7 +263,7 @@ func TestDeleteCheckNotFoundReturnsNotFoundError(t *testing.T) {
 
 	// The caller's not-found branch is a bare type assertion, so the concrete
 	// type has to be *NotFoundError, not a wrapped *APIError.
-	if _, ok := err.(*NotFoundError); !ok {
+	if notFound := (*NotFoundError)(nil); !errors.As(err, &notFound) {
 		t.Fatalf("expected *NotFoundError, got %T (%v)", err, err)
 	}
 
@@ -311,7 +312,7 @@ func TestDeleteCheckServerErrorStillFails(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a 500 on delete")
 	}
-	if _, ok := err.(*NotFoundError); ok {
+	if notFound := (*NotFoundError)(nil); errors.As(err, &notFound) {
 		t.Fatal("a 500 must not be reported as not-found")
 	}
 }

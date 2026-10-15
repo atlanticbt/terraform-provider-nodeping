@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -12,7 +13,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 var (
@@ -87,9 +88,9 @@ func (r *SubaccountResource) Create(ctx context.Context, req resource.CreateRequ
 
 	tflog.Debug(ctx, "Created subaccount", map[string]interface{}{"id": id})
 
-	// A billable account now exists. Everything below can still fail and
+	// A real account now exists. Everything below can still fail and
 	// return, so its ID reaches state before any of it runs.
-	defer recordCreatedID(ctx, resp, id)
+	defer identity.RecordCreatedID(ctx, resp, id, types.StringNull())
 
 	// POST does not accept `status` or `autodiagnotifications`, so anything the
 	// practitioner configured for those has to be applied with a follow-up PUT.
@@ -124,7 +125,7 @@ func (r *SubaccountResource) Create(ctx context.Context, req resource.CreateRequ
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, plan.ID, &resp.Diagnostics)
+	identity.SetAccount(ctx, resp.Identity, plan.ID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -170,7 +171,7 @@ func (r *SubaccountResource) Read(ctx context.Context, req resource.ReadRequest,
 		state.AutodiagNotifications = types.StringValue("false")
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, &resp.Diagnostics)
+	identity.SetAccount(ctx, resp.Identity, state.ID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -233,7 +234,7 @@ func (r *SubaccountResource) Update(ctx context.Context, req resource.UpdateRequ
 	// re-states the same values -- but on a resource created before the core
 	// supported identity there is no stored identity yet, and the framework
 	// rejects an update that leaves it null.
-	setIdentity(ctx, resp.Identity, plan.ID, &resp.Diagnostics)
+	identity.SetAccount(ctx, resp.Identity, plan.ID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -272,7 +273,7 @@ func (r *SubaccountResource) Delete(ctx context.Context, req resource.DeleteRequ
 func (r *SubaccountResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	// An "identity" import block is handled first; anything else is the
 	// established bare string ID, which must keep working unchanged.
-	id, fromIdentity := identityImportValues(ctx, req, &resp.Diagnostics)
+	id, fromIdentity := identity.AccountFromImport(ctx, req, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -298,7 +299,7 @@ func (r *SubaccountResource) ImportState(ctx context.Context, req resource.Impor
 
 	tflog.Debug(ctx, "Importing subaccount", map[string]interface{}{"id": id})
 
-	setIdentity(ctx, resp.Identity, types.StringValue(id), &resp.Diagnostics)
+	identity.SetAccount(ctx, resp.Identity, types.StringValue(id), &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}

@@ -2,19 +2,20 @@
 page_title: "nodeping_maintenances Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches all NodePing maintenance windows.
+  Reads all NodePing maintenance windows, sorted by ID.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_maintenances (Data Source)
 
-Fetches all NodePing maintenance windows, sorted by ID.
+Reads all NodePing maintenance windows in one account.
 
-## Ad-hoc windows come and go
-
-The list includes any ad-hoc window that happens to exist at the moment of the
-read. **NodePing deletes an ad-hoc window as soon as it finishes running**, so
-the number of entries returned is not stable over time and neither are their
-IDs. Filter on `ad_hoc` when you need only the windows that persist.
+> **CAUTION:** The list includes each ad-hoc window that exists at the time of the read. NodePing deletes an ad-hoc window when it ends. Thus the number of entries and their IDs can change between reads. Filter on `ad_hoc` to keep only the windows that stay.
 
 ## Example Usage
 
@@ -25,7 +26,7 @@ output "scheduled_window_ids" {
   value = [for m in data.nodeping_maintenances.all.maintenances : m.id if !m.ad_hoc]
 }
 
-# Windows currently disabling checks
+# The windows that disable checks now.
 output "running_now" {
   value = [
     for m in data.nodeping_maintenances.all.maintenances : m.name
@@ -33,7 +34,7 @@ output "running_now" {
   ]
 }
 
-# Every check covered by at least one enabled window
+# Each check that an enabled window includes.
 locals {
   covered_check_ids = distinct(flatten([
     for m in data.nodeping_maintenances.all.maintenances : m.checklist
@@ -42,7 +43,7 @@ locals {
 }
 ```
 
-### SubAccount windows
+### List the windows of a subaccount
 
 ```hcl
 data "nodeping_maintenances" "client" {
@@ -52,26 +53,28 @@ data "nodeping_maintenances" "client" {
 
 ## Argument Reference
 
-- `customer_id` - (Optional) Customer ID (SubAccount ID) to list windows for.
-  Leave unset to use the provider-level account.
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `customer_id` | No | The ID of the account to list. Set `customer_id` to list the objects of a subaccount. If you do not set it, the provider uses its own `customer_id`, or the account of the API token. |
 
 ## Attribute Reference
 
-- `maintenances` - Maintenance windows, sorted by ID. Each entry contains:
-  - `id` - The unique identifier of the window.
-  - `customer_id` - The customer ID that owns the window.
-  - `name` - Friendly name for the window.
-  - `enabled` - Whether the schedule is active.
-  - `cron` - The 5-field cron expression. Empty for ad-hoc windows.
-  - `duration` - How long the checks stay disabled, in minutes.
-  - `checklist` - Check IDs disabled by the window, sorted by ID.
-  - `processing` - `true` while NodePing is currently running the window.
-  - `nextrun` - Unix timestamp in milliseconds of the next scheduled run.
-  - `ad_hoc` - `true` when the entry is an ad-hoc window. Ad-hoc windows are
-    deleted by NodePing once they finish and cannot be managed by the
-    `nodeping_maintenance` resource.
-  - `last_edited_by` - Email address of the account that last edited the window.
-  - `last_edited_at` - Unix timestamp in milliseconds of the last edit.
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `maintenances` | List of Object | The maintenance windows, sorted by ID. |
+| `maintenances[].id` | String | The ID of the window. |
+| `maintenances[].customer_id` | String | The ID of the account that owns the window. |
+| `maintenances[].name` | String | The name of the window. |
+| `maintenances[].ad_hoc` | Bool | `true` for an ad-hoc window. The `nodeping_maintenance` resource cannot manage ad-hoc windows. |
+| `maintenances[].enabled` | Bool | `true` when the schedule is active. |
+| `maintenances[].cron` | String | The 5-field cron expression. It is empty for an ad-hoc window. |
+| `maintenances[].duration` | Number | The time that the checks stay disabled, in minutes. |
+| `maintenances[].checklist` | List of String | The IDs of the checks that the window disables, sorted by ID. |
+| `maintenances[].processing` | Bool | `true` while NodePing runs the window. |
+| `maintenances[].nextrun` | Number | The time of the next run, in milliseconds since the Unix epoch. |
+| `maintenances[].last_edited_by` | String | The email address of the account that made the last change. |
+| `maintenances[].last_edited_at` | Number | The time of the last change, in milliseconds since the Unix epoch. |
 
-Per-run `history` is not included in the list; read it through the singular
-`nodeping_maintenance` data source when you need it.
+## Notes
+
+- The list does not include the run history. To read it, use the [`nodeping_maintenance`](nodeping_maintenance.md) data source.

@@ -2,7 +2,7 @@
 
 BINARY      := terraform-provider-nodeping
 VERSION     ?= dev
-PROVIDER_NS := atlanticbt.com/abt/nodeping
+PROVIDER_NS := registry.opentofu.org/atlanticbt/nodeping
 
 # Local dev install path for the OpenTofu filesystem mirror.
 MIRROR_DIR  := $(HOME)/.local/share/opentofu/plugins/$(PROVIDER_NS)/$(VERSION)/$(shell go env GOOS)_$(shell go env GOARCH)
@@ -14,7 +14,7 @@ build:
 	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o $(BINARY) .
 
 test:
-	go test ./... -race -cover
+	go test ./... -race -shuffle=on -cover
 
 cover:
 	go test ./... -race -coverprofile=coverage.out -covermode=atomic
@@ -32,11 +32,11 @@ cover:
 # Without TF_ACC_TERRAFORM_PATH, plugin-testing silently DOWNLOADS HashiCorp
 # Terraform and tests the wrong tool. Always set it explicitly.
 #
-# Requires NODEPING_API_TOKEN for a DEDICATED TEST SUBACCOUNT. These tests
-# create and destroy live checks and contacts. Never point them at a client
-# subaccount or the main account. A token scoped to the test subaccount is
-# strongly preferred over the parent token: a scoped token cannot reach a
-# sibling account even if a test is misconfigured.
+# Requires NODEPING_API_TOKEN for a DEDICATED TEST ACCOUNT. These tests create
+# and destroy live checks and contacts. Never point them at an account that
+# holds monitoring you care about. A token scoped to the test subaccount is
+# strongly preferred over a parent-account token: a scoped token cannot reach
+# a sibling account even if a test is misconfigured.
 #
 # This target does NOT create a subaccount — see test-acc-subaccount.
 #
@@ -52,13 +52,13 @@ test-acc:
 	TF_ACC_PROVIDER_NAMESPACE=hashicorp \
 	go test ./... -v -timeout 30m
 
-# !!! CREATES AND DESTROYS A REAL, BILLABLE NODEPING SUBACCOUNT !!!
+# !!! CREATES AND DESTROYS A REAL NODEPING SUBACCOUNT !!!
 #
 # Separated from test-acc behind its own build tag so that an ordinary
-# acceptance run cannot do this by accident. Destroying a subaccount destroys
-# every check, contact and stored result inside it, so the token this runs with
-# decides the blast radius: use one scoped to a disposable test account, never
-# the parent token, which owns every client subaccount.
+# acceptance run cannot do this by accident. Creating a direct subaccount needs
+# a parent-account token, and that token can delete every subaccount it owns;
+# destroying a subaccount destroys every check, contact and stored result
+# inside it. Run it only against a parent account that holds nothing else.
 test-acc-subaccount:
 	@test -n "$(TOFU_BIN)" || { echo "tofu not found; set TOFU_BIN"; exit 1; }
 	@test -n "$$NODEPING_API_TOKEN" || { echo "NODEPING_API_TOKEN is not set"; exit 1; }
@@ -69,7 +69,7 @@ test-acc-subaccount:
 	go test -tags acceptance_subaccount ./internal/resources/subaccount/ -v -timeout 30m
 
 lint:
-	go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.0 run --timeout 5m ./...
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
 
 fmt:
 	gofmt -w .
@@ -78,13 +78,13 @@ vet:
 	go vet ./...
 
 vulncheck:
-	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
 
 tidy:
 	go mod tidy
 
 # Install into the local OpenTofu filesystem mirror for manual testing.
-# Requires a matching provider_installation block in ~/.tofurc — see docs/development.md.
+# Requires a matching provider_installation block in ~/.tofurc — see CONTRIBUTING.md.
 # The destination is removed before the copy. On Apple Silicon a Go binary
 # carries an ad-hoc code signature, and copying over an existing file reuses the
 # inode with a signature the kernel has already cached, so the replacement is
@@ -106,7 +106,7 @@ help:
 	@echo "test       - Run unit tests with race detector"
 	@echo "cover      - Run tests and write coverage.out/coverage.html"
 	@echo "test-acc   - Run acceptance tests against a real tofu binary (needs NODEPING_API_TOKEN)"
-	@echo "test-acc-subaccount - Acceptance test that CREATES AND DESTROYS A BILLABLE SUBACCOUNT"
+	@echo "test-acc-subaccount - Acceptance test that CREATES AND DESTROYS A REAL SUBACCOUNT"
 	@echo "lint       - Run golangci-lint"
 	@echo "fmt        - Format Go code"
 	@echo "vet        - Run go vet"

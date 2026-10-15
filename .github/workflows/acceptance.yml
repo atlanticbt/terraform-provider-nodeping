@@ -1,0 +1,49 @@
+name: acceptance
+
+# Runs the live acceptance suite against a disposable NodePing account. Every
+# defect found before the first public release came from the live API
+# differing from the unit-test mocks, so this runs on a schedule rather than
+# only by hand.
+#
+# Never runs on pull requests: the secrets live on the protected "acceptance"
+# environment, which pull requests from forks cannot reach.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # One run at a time: concurrent runs would share the test account's fixtures.
+  group: acceptance
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    name: acceptance
+    runs-on: ubuntu-latest
+    environment: acceptance
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          # This job holds the NodePing token, so it does not restore a cache.
+          cache: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.12.6
+          tofu_wrapper: false
+      - name: Run acceptance tests
+        env:
+          NODEPING_API_TOKEN: ${{ secrets.NODEPING_API_TOKEN }}
+          NODEPING_TEST_CHECK_ID: ${{ secrets.NODEPING_TEST_CHECK_ID }}
+          NODEPING_TEST_CONTACT_ID: ${{ secrets.NODEPING_TEST_CONTACT_ID }}
+          NODEPING_TEST_CUSTOMER_ID: ${{ secrets.NODEPING_TEST_CUSTOMER_ID }}
+        run: make test-acc TOFU_BIN="$(command -v tofu)"

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,7 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 var (
@@ -100,7 +101,7 @@ func (r *NotificationProfileResource) Create(ctx context.Context, req resource.C
 		"id": state.ID.ValueString(),
 	})
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
@@ -135,7 +136,7 @@ func (r *NotificationProfileResource) Read(ctx context.Context, req resource.Rea
 
 	refreshed := mapForRead(profile, &state)
 
-	setIdentity(ctx, resp.Identity, refreshed.ID, refreshed.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, refreshed.ID, refreshed.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, refreshed)...)
 }
@@ -185,7 +186,7 @@ func (r *NotificationProfileResource) Update(ctx context.Context, req resource.U
 	// re-states the same values -- but on a resource created before the core
 	// supported identity there is no stored identity yet, and the framework
 	// rejects an update that leaves it null.
-	setIdentity(ctx, resp.Identity, updated.ID, updated.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, updated.ID, updated.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, updated)...)
 }
@@ -221,28 +222,21 @@ func (r *NotificationProfileResource) Delete(ctx context.Context, req resource.D
 }
 
 func (r *NotificationProfileResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	var profileID string
-	var customerID string
-
 	// An "identity" import block is handled first; anything else is the
 	// established string form, which must keep working unchanged.
-	if idFromIdentity, customerFromIdentity, fromIdentity := identityImportValues(ctx, req, &resp.Diagnostics); fromIdentity {
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if strings.TrimSpace(idFromIdentity) == "" {
-			resp.Diagnostics.AddError(
-				"Invalid Import Identity",
-				"The 'id' attribute of the import identity must be a non-empty notification profile ID.",
-			)
-			return
-		}
-		profileID = idFromIdentity
-		customerID = customerFromIdentity
-	} else {
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	profileID, customerID, fromIdentity := identity.FromImport(ctx, req, &resp.Diagnostics, "notification profile")
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// FromImport rejects an empty id; a whitespace-only one is rejected here too.
+	if fromIdentity && strings.TrimSpace(profileID) == "" {
+		resp.Diagnostics.AddError(
+			"Invalid Import Identity",
+			"The 'id' attribute of the import identity must be a non-empty notification profile ID.",
+		)
+		return
+	}
+	if !fromIdentity {
 
 		idParts := strings.Split(req.ID, ":")
 
@@ -297,7 +291,7 @@ func (r *NotificationProfileResource) ImportState(ctx context.Context, req resou
 		state.CustomerID = customerIDValue
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }

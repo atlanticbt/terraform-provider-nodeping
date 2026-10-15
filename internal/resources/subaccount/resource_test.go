@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 const accountID = "201203232048C76FH"
@@ -439,7 +439,7 @@ func TestCreateRecordsTheAccountIDWhenTheFollowUpPutFails(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 
-	// The POST created a real, billable account. It must not be left with
+	// The POST created a real account. It must not be left with
 	// nothing in state pointing at it.
 	got := decodeState(t, ctx, resp.State)
 	if got.ID.ValueString() != accountID {

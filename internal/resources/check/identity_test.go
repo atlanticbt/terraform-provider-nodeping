@@ -267,12 +267,3 @@ func TestImportState_NullIdentityFallsBackToTheStringID(t *testing.T) {
 		t.Fatalf("identity after string import: %+v", got)
 	}
 }
-
-func TestKnownIdentityValue_CollapsesUnknownToNull(t *testing.T) {
-	if got := knownIdentityValue(types.StringUnknown()); !got.IsNull() {
-		t.Fatalf("expected null, got %v", got)
-	}
-	if got := knownIdentityValue(types.StringValue("x")); got.ValueString() != "x" {
-		t.Fatalf("expected the value to pass through, got %v", got)
-	}
-}

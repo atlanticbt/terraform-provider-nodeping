@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
 	"sort"
 	"strings"
 
@@ -14,7 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"bitbucket.org/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
 )
 
 var (
@@ -112,7 +113,7 @@ func (r *ContactResource) Create(ctx context.Context, req resource.CreateRequest
 		"id": contact.ID,
 	})
 
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -157,7 +158,7 @@ func (r *ContactResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -245,7 +246,7 @@ func (r *ContactResource) Update(ctx context.Context, req resource.UpdateRequest
 	// re-states the same values -- but on a resource created before the core
 	// supported identity there is no stored identity yet, and the framework
 	// rejects an update that leaves it null.
-	setIdentity(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, plan.ID, plan.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -280,28 +281,13 @@ func (r *ContactResource) Delete(ctx context.Context, req resource.DeleteRequest
 }
 
 func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	var contactID string
-	var customerID string
-
 	// An "identity" import block is handled first; anything else is the
 	// established string form, which must keep working unchanged.
-	if idFromIdentity, customerFromIdentity, ok := identityImportValues(ctx, req, &resp.Diagnostics); ok {
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if idFromIdentity == "" {
-			resp.Diagnostics.AddError(
-				"Invalid Import Identity",
-				"The 'id' attribute of the import identity must be a non-empty contact ID.",
-			)
-			return
-		}
-		contactID = idFromIdentity
-		customerID = customerFromIdentity
-	} else {
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	contactID, customerID, fromIdentity := identity.FromImport(ctx, req, &resp.Diagnostics, "contact")
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !fromIdentity {
 
 		idParts := strings.Split(req.ID, ":")
 
@@ -365,7 +351,7 @@ func (r *ContactResource) ImportState(ctx context.Context, req resource.ImportSt
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -606,7 +592,10 @@ func mapAddressesToModel(ctx context.Context, apiAddresses map[string]client.Con
 	result := make([]AddressModel, 0, len(apiAddresses))
 	emitted := make(map[string]bool, len(apiAddresses))
 
-	for i, id := range matched {
+	// matched has one entry per planned address, so ranging over the plan keeps
+	// both indexes in bounds.
+	for i := range planAddresses {
+		id := matched[i]
 		if id == "" || emitted[id] {
 			continue
 		}

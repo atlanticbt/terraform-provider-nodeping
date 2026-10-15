@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,6 +18,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/time/rate"
 )
@@ -31,40 +32,64 @@ const (
 	DefaultTimeout      = 30 * time.Second
 
 	// maxResponseBodySize caps how much of a response body we are willing to
-	// buffer. NodePing responses are small; anything larger is either a bug or
-	// a hostile/misconfigured endpoint and must not be allowed to exhaust
-	// provider memory.
-	maxResponseBodySize = 1 << 20 // 1 MiB
+	// buffer. List endpoints return every object in an account in one
+	// document, so the cap leaves room for large accounts while still stopping
+	// a hostile or misconfigured endpoint from exhausting provider memory. A
+	// response over the cap is an error, never silently truncated.
+	maxResponseBodySize = 16 << 20 // 16 MiB
 
 	// maxErrorMessageLength caps how much of an unparseable response body gets
 	// echoed back into an APIError message.
 	maxErrorMessageLength = 512
 )
 
+// tokenWaiter is the part of *rate.Limiter the client uses. Tests substitute a
+// counting implementation so rate-limit behaviour is asserted without timing.
+type tokenWaiter interface {
+	Wait(ctx context.Context) error
+}
+
+// RetryPolicy is the retry behaviour applied to failed requests. Unlike the
+// legacy ClientConfig fields, a zero value here is honoured: MaxRetries 0 means
+// exactly one attempt and a zero wait means no delay between attempts.
+type RetryPolicy struct {
+	MaxRetries int
+	MinWait    time.Duration
+	MaxWait    time.Duration
+}
+
 type Client struct {
 	httpClient   *http.Client
 	baseURL      string
 	apiToken     string
 	customerID   string
-	rateLimiter  *rate.Limiter
+	rateLimiter  tokenWaiter
 	maxRetries   int
 	retryMinWait time.Duration
 	retryMaxWait time.Duration
 	userAgent    string
 	defaultTags  []string
+	// sleep waits between retry attempts. It is a field so tests can record
+	// the requested delay instead of waiting for it.
+	sleep func(ctx context.Context, d time.Duration) error
 }
 
 type ClientConfig struct {
-	APIToken     string
-	CustomerID   string
-	BaseURL      string
-	RateLimit    float64
+	APIToken   string
+	CustomerID string
+	BaseURL    string
+	RateLimit  float64
+	// MaxRetries, RetryMinWait and RetryMaxWait select the defaults when zero
+	// or negative. Set Retry instead to request zero retries or zero waits.
 	MaxRetries   int
 	RetryMinWait time.Duration
 	RetryMaxWait time.Duration
-	Timeout      time.Duration
-	UserAgent    string
-	DefaultTags  []string
+	// Retry, when set, overrides the three fields above and is applied as
+	// given: zero values are honoured, negative values select the default.
+	Retry       *RetryPolicy
+	Timeout     time.Duration
+	UserAgent   string
+	DefaultTags []string
 }
 
 func NewClient(cfg ClientConfig) *Client {
@@ -89,6 +114,18 @@ func NewClient(cfg ClientConfig) *Client {
 	if cfg.UserAgent == "" {
 		cfg.UserAgent = "terraform-provider-nodeping"
 	}
+	if r := cfg.Retry; r != nil {
+		cfg.MaxRetries, cfg.RetryMinWait, cfg.RetryMaxWait = DefaultMaxRetries, DefaultRetryMinWait, DefaultRetryMaxWait
+		if r.MaxRetries >= 0 {
+			cfg.MaxRetries = r.MaxRetries
+		}
+		if r.MinWait >= 0 {
+			cfg.RetryMinWait = r.MinWait
+		}
+		if r.MaxWait >= 0 {
+			cfg.RetryMaxWait = r.MaxWait
+		}
+	}
 
 	return &Client{
 		httpClient: &http.Client{
@@ -103,7 +140,29 @@ func NewClient(cfg ClientConfig) *Client {
 		retryMaxWait: cfg.RetryMaxWait,
 		userAgent:    cfg.UserAgent,
 		defaultTags:  cfg.DefaultTags,
+		sleep:        sleepContext,
 	}
+}
+
+// sleepContext waits for d, returning early with the context's error if it is
+// cancelled first.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// RetryPolicy reports the retry behaviour the client applies.
+func (c *Client) RetryPolicy() RetryPolicy {
+	return RetryPolicy{MaxRetries: c.maxRetries, MinWait: c.retryMinWait, MaxWait: c.retryMaxWait}
 }
 
 func (c *Client) WithCustomerID(customerID string) *Client {
@@ -118,6 +177,7 @@ func (c *Client) WithCustomerID(customerID string) *Client {
 		retryMaxWait: c.retryMaxWait,
 		userAgent:    c.userAgent,
 		defaultTags:  c.defaultTags,
+		sleep:        c.sleep,
 	}
 }
 
@@ -278,13 +338,8 @@ func (c *Client) doRequest(ctx context.Context, opts requestOptions, result inte
 
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
-			waitTime := c.retryDelay(attempt, retryAfter)
-			timer := time.NewTimer(waitTime)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
+			if err := c.sleep(ctx, c.retryDelay(attempt, retryAfter)); err != nil {
+				return err
 			}
 		}
 
@@ -371,13 +426,18 @@ func (c *Client) executeRequest(ctx context.Context, opts requestOptions, result
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize))
+	// One byte past the cap is read so an oversized body is detected rather
+	// than silently truncated into JSON that fails to parse.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodySize+1))
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
 		// The server already acted; a truncated read is never PreSend.
 		return classifyTransportError(fmt.Errorf("failed to read response body: %w", err))
+	}
+	if len(respBody) > maxResponseBodySize {
+		return fmt.Errorf("response from %s exceeds %d bytes; refusing to parse a truncated body", opts.path, maxResponseBodySize)
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -414,13 +474,13 @@ func errorMessageFromBody(body []byte) (string, bool) {
 	if errResp.Error == "" {
 		return "", false
 	}
-	return truncateMessage(errResp.Error, maxErrorMessageLength), true
+	return truncateMessage(errResp.Error), true
 }
 
 func (c *Client) handleErrorResponse(statusCode int, header http.Header, body []byte) error {
 	message, ok := errorMessageFromBody(body)
 	if !ok {
-		message = truncateMessage(string(body), maxErrorMessageLength)
+		message = truncateMessage(string(body))
 	}
 
 	if statusCode == http.StatusTooManyRequests {
@@ -441,12 +501,19 @@ func (c *Client) handleErrorResponse(statusCode int, header http.Header, body []
 	}
 }
 
-func truncateMessage(s string, limit int) string {
+func truncateMessage(s string) string {
+	const limit = maxErrorMessageLength
 	s = strings.TrimSpace(s)
 	if len(s) <= limit {
 		return s
 	}
-	return s[:limit] + "... (truncated)"
+	// Back up to the start of a character so a multi-byte UTF-8 sequence is
+	// never cut in half.
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "... (truncated)"
 }
 
 // parseRetryAfter understands both forms permitted by RFC 9110: a
@@ -495,7 +562,7 @@ func (c *Client) calculateBackoff(attempt int) time.Duration {
 
 	// Jitter is applied first, then the cap, so the returned delay can never
 	// exceed retryMaxWait.
-	backoff += rand.Float64() * 0.3 * backoff
+	backoff += rand.Float64() * 0.3 * backoff //nolint:gosec // backoff jitter, not a security value
 
 	if backoff > float64(c.retryMaxWait) {
 		backoff = float64(c.retryMaxWait)

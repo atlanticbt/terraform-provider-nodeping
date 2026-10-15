@@ -2,23 +2,28 @@
 page_title: "nodeping_account Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches a NodePing account or subaccount.
+  Reads one NodePing account or subaccount.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_account (Data Source)
 
-Fetches a NodePing account or subaccount.
+Reads one NodePing account or subaccount.
 
-Omit `id` to read the account the configured API token belongs to. Supply an account ID to
-read a specific subaccount.
+If you do not set `id`, the data source reads the account that owns the API token. Set `id` to read a subaccount.
 
 ## Example Usage
 
 ```hcl
-# The account the API token belongs to.
+# The account that owns the API token.
 data "nodeping_account" "primary" {}
 
-# A specific subaccount.
+# A subaccount.
 data "nodeping_account" "client" {
   id = "201203232048C76FH"
 }
@@ -32,7 +37,7 @@ output "client_is_suspended" {
 }
 ```
 
-### Reading back a managed subaccount
+### Read a subaccount that you manage
 
 ```hcl
 resource "nodeping_subaccount" "client" {
@@ -48,34 +53,26 @@ data "nodeping_account" "client" {
 }
 ```
 
-## Resolving the primary account
+## Argument Reference
 
-NodePing has no endpoint that returns "my account" directly. When `id` is omitted, the
-provider reads the account listing and identifies the primary account as the only entry
-that carries a subaccount count, then fetches that account by ID. If the listing is
-ambiguous — several entries and no subaccount count on any of them — the read fails with a
-diagnostic asking for an explicit `id` rather than guessing.
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `id` | No | The NodePing account ID. If you do not set it, the data source finds the account that owns the API token and writes its ID here. |
 
-## Schema
+## Attribute Reference
 
-### Optional
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `name` | String | The account name. The API calls this field `customer_name`. |
+| `type` | String | The account type, for example `customer` or `subcustomer`. |
+| `status` | String | The account status: `Active` or `Suspend`. |
+| `timezone` | String | The offset from GMT (Greenwich Mean Time), for example `"-7"`. The provider always returns a string, also when the API sends a number. |
+| `creation_date` | Number | The time when NodePing created the account. |
+| `next_billing_date` | String | The next billing date that NodePing reports. |
+| `default_locations` | List of String | The default probe regions of the account. |
 
-- `id` (String) The NodePing account ID. Leave unset to read the account the API token
-  belongs to; the resolved ID is written back to this attribute.
+## Notes
 
-### Read-Only
-
-- `name` (String) The account name, returned by the API as `customer_name`.
-- `type` (String) The account type, for example `customer` or `subcustomer`.
-- `status` (String) The account status, `Active` or `Suspend`.
-- `timezone` (String) The account's GMT offset as a string, for example `"-7"`. NodePing
-  sometimes sends this as a JSON number; the provider normalises it to a string either way.
-- `creation_date` (Number) The account creation timestamp reported by NodePing.
-- `next_billing_date` (String) The next billing date reported by NodePing.
-- `default_locations` (List of String) The account's default probe regions.
-
-## Fields this data source cannot expose
-
-NodePing does not return `contactname`, `email`, `emailme` or `autodiagnotifications` from
-any read, so they are unavailable here and in
-[`nodeping_subaccount`](../resources/nodeping_subaccount.md) after an import.
+- NodePing has no request that returns "my account". When `id` is not set, the provider reads the account list. The primary account is the only entry with a subaccount count. The provider then reads that account by ID.
+- If the list does not identify one primary account, the read fails. Set `id` in that case.
+- NodePing does not return `contactname`, `email`, `emailme` or `autodiagnotifications`. This data source cannot show them. The [`nodeping_subaccount`](../resources/nodeping_subaccount.md) resource also cannot read them after an import.

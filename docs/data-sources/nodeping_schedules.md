@@ -2,13 +2,18 @@
 page_title: "nodeping_schedules Data Source - terraform-provider-nodeping"
 subcategory: ""
 description: |-
-  Fetches all NodePing notification schedules.
+  Reads all NodePing notification schedules, sorted by schedule ID.
 ---
+<!--
+doc: registry-data-source
+standard: ASD-STE100 (about 80%)
+last-refreshed: 2026-10-14
+generated-by: doc-refresh skill
+-->
 
 # nodeping_schedules (Data Source)
 
-Fetches all NodePing notification schedules. The list is ordered by schedule ID
-so repeated reads produce the same result.
+Reads all NodePing notification schedules in one account. The list is sorted by schedule ID, so each read gives the same order.
 
 ## Example Usage
 
@@ -19,7 +24,7 @@ output "schedule_ids" {
   value = [for s in data.nodeping_schedules.all.schedules : s.id]
 }
 
-# Which schedules leave Sunday completely open?
+# The schedules that notify all day on Sunday.
 locals {
   sunday_always_on = [
     for s in data.nodeping_schedules.all.schedules : s.id
@@ -28,7 +33,7 @@ locals {
 }
 ```
 
-### Listing a SubAccount's Schedules
+### List the schedules of a subaccount
 
 ```hcl
 data "nodeping_schedules" "client" {
@@ -38,16 +43,19 @@ data "nodeping_schedules" "client" {
 
 ## Argument Reference
 
-- `customer_id` - (Optional) The customer ID (SubAccount ID) to list schedules
-  for. Omit to use the account the provider is configured for.
+| Argument | Required | Description |
+|----------|----------|-------------|
+| `customer_id` | No | The ID of the account to list. Set `customer_id` to list the objects of a subaccount. If you do not set it, the provider uses its own `customer_id`, or the account of the API token. |
 
 ## Attribute Reference
 
-- `schedules` - All schedules, ordered by ID. Each contains:
-  - `id` - The schedule name.
-  - `monday`, `tuesday`, `wednesday`, `thursday`, `friday`, `saturday`, `sunday` -
-    The notification window for that day, or `null` when the day is unscheduled.
-    Each contains `time1`, `time2`, `exclude`, `disabled` and `allday`.
-
-See [`nodeping_schedule`](nodeping_schedule.md) for the meaning of each day
-field.
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `schedules` | List of Object | All schedules, sorted by ID. |
+| `schedules[].id` | String | The schedule name. |
+| `schedules[].monday`, `schedules[].tuesday`, `schedules[].wednesday`, `schedules[].thursday`, `schedules[].friday`, `schedules[].saturday`, `schedules[].sunday` | Object | The notification period for that day. It is `null` when the day has no schedule. Each day has the fields below. |
+| `schedules[].<day>.time1` | String | The start of the notification period, in 24-hour `H:MM` or `HH:MM` format. It is empty on a day off. |
+| `schedules[].<day>.time2` | String | The end of the notification period. It is empty on a day off. |
+| `schedules[].<day>.exclude` | Bool | `true` when the period is inverted: NodePing notifies all day, except between `time1` and `time2`. |
+| `schedules[].<day>.disabled` | Bool | `true` when notifications are off for the day. |
+| `schedules[].<day>.allday` | Bool | `true` when notifications are on for the whole day. |

@@ -23,7 +23,9 @@ func newAbsenceTestClient(t *testing.T, status int, body string) *Client {
 	}))
 	t.Cleanup(server.Close)
 
-	return NewClient(ClientConfig{APIToken: "test-token", BaseURL: server.URL})
+	// A high rate limit keeps the table of getters from queueing behind the
+	// production default of 10 requests per second.
+	return NewClient(ClientConfig{APIToken: "test-token", BaseURL: server.URL, RateLimit: 1000})
 }
 
 // singleResourceGetter adapts every Get that returns one resource to a common

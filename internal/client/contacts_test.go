@@ -114,7 +114,8 @@ func TestGetContactNotFound(t *testing.T) {
 		t.Fatal("expected error, got nil")
 	}
 
-	_, ok := err.(*NotFoundError)
+	var notFound *NotFoundError
+	ok := errors.As(err, &notFound)
 	if !ok {
 		t.Errorf("expected *NotFoundError, got %T", err)
 	}
@@ -243,7 +244,7 @@ func TestDeleteContactNotFoundReturnsNotFoundError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if _, ok := err.(*NotFoundError); !ok {
+	if notFound := (*NotFoundError)(nil); !errors.As(err, &notFound) {
 		t.Fatalf("expected *NotFoundError, got %T (%v)", err, err)
 	}
 }

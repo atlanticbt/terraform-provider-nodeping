@@ -6,7 +6,7 @@
 terraform {
   required_providers {
     nodeping = {
-      source  = "atlanticbt.com/abt/nodeping"
+      source  = "atlanticbt/nodeping"
       version = "~> 0.2"
     }
   }
@@ -24,9 +24,9 @@ resource "nodeping_check" "edge_router" {
   label   = "Edge Router"
   enabled = true
 
-  interval  = 1  # Check every minute
-  threshold = 5  # 5 second timeout
-  sens      = 2  # 2 rechecks before status change
+  interval  = 1 # Check every minute
+  threshold = 5 # 5 second timeout
+  sens      = 2 # 2 rechecks before status change
 
   runlocations = ["nam"]
 }
@@ -52,11 +52,11 @@ resource "nodeping_check" "web_server" {
 
 # Another dependent check - database server
 resource "nodeping_check" "database" {
-  type     = "PORT"
-  target   = "db.internal.example.com"
-  label    = "Database Server"
-  enabled  = true
-  port     = 5432
+  type    = "PORT"
+  target  = "db.internal.example.com"
+  label   = "Database Server"
+  enabled = true
+  port    = 5432
 
   interval  = 5
   threshold = 10
