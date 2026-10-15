@@ -272,9 +272,6 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 	}
 
 	apiToken := os.Getenv("NODEPING_API_TOKEN")
-	if apiToken == "" {
-		apiToken = os.Getenv("NODEPING_API_KEY")
-	}
 	if !config.APIToken.IsNull() {
 		apiToken = config.APIToken.ValueString()
 	}
@@ -319,19 +316,21 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 		rateLimit = config.RateLimit.ValueFloat64()
 	}
 
-	var maxRetries int = client.DefaultMaxRetries
+	// Passed as a RetryPolicy so a configured 0 reaches the client as 0
+	// ("disable retries", "no wait") instead of being read as "unset".
+	retry := client.RetryPolicy{
+		MaxRetries: client.DefaultMaxRetries,
+		MinWait:    client.DefaultRetryMinWait,
+		MaxWait:    client.DefaultRetryMaxWait,
+	}
 	if !config.MaxRetries.IsNull() && !config.MaxRetries.IsUnknown() {
-		maxRetries = int(config.MaxRetries.ValueInt64())
+		retry.MaxRetries = int(config.MaxRetries.ValueInt64())
 	}
-
-	var retryWaitMin time.Duration = client.DefaultRetryMinWait
 	if !config.RetryWaitMin.IsNull() && !config.RetryWaitMin.IsUnknown() {
-		retryWaitMin = time.Duration(config.RetryWaitMin.ValueInt64()) * time.Second
+		retry.MinWait = time.Duration(config.RetryWaitMin.ValueInt64()) * time.Second
 	}
-
-	var retryWaitMax time.Duration = client.DefaultRetryMaxWait
 	if !config.RetryWaitMax.IsNull() && !config.RetryWaitMax.IsUnknown() {
-		retryWaitMax = time.Duration(config.RetryWaitMax.ValueInt64()) * time.Second
+		retry.MaxWait = time.Duration(config.RetryWaitMax.ValueInt64()) * time.Second
 	}
 
 	var defaultTags []string
@@ -343,15 +342,13 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 	}
 
 	clientCfg := client.ClientConfig{
-		APIToken:     apiToken,
-		CustomerID:   customerID,
-		BaseURL:      apiURL,
-		RateLimit:    rateLimit,
-		MaxRetries:   maxRetries,
-		RetryMinWait: retryWaitMin,
-		RetryMaxWait: retryWaitMax,
-		UserAgent:    "terraform-provider-nodeping/" + p.version,
-		DefaultTags:  defaultTags,
+		APIToken:    apiToken,
+		CustomerID:  customerID,
+		BaseURL:     apiURL,
+		RateLimit:   rateLimit,
+		Retry:       &retry,
+		UserAgent:   "terraform-provider-nodeping/" + p.version,
+		DefaultTags: defaultTags,
 	}
 
 	c := client.NewClient(clientCfg)
@@ -360,7 +357,7 @@ func (p *NodePingProvider) Configure(ctx context.Context, req provider.Configure
 		"api_url":     apiURL,
 		"customer_id": customerID,
 		"rate_limit":  rateLimit,
-		"max_retries": maxRetries,
+		"max_retries": retry.MaxRetries,
 	})
 
 	resp.DataSourceData = c
