@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
 	"reflect"
 	"sort"
 	"strconv"
@@ -113,7 +114,7 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 
 	// NodePing owns a check from here on. Every step below can still fail and
 	// return, so the identifier reaches state before any of them do.
-	defer recordCreatedID(ctx, resp, check.ID, plan.CustomerID)
+	defer identity.RecordCreatedID(ctx, resp, check.ID, plan.CustomerID)
 
 	result := mapForApply(ctx, check, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
@@ -124,7 +125,7 @@ func (r *CheckResource) Create(ctx context.Context, req resource.CreateRequest, 
 		"id": check.ID,
 	})
 
-	setIdentity(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
 }
@@ -164,7 +165,7 @@ func (r *CheckResource) Read(ctx context.Context, req resource.ReadRequest, resp
 		return
 	}
 
-	setIdentity(ctx, resp.Identity, newState.ID, newState.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, newState.ID, newState.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, newState)...)
 }
@@ -221,7 +222,7 @@ func (r *CheckResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	// re-states the same values -- but on a resource created before the core
 	// supported identity there is no stored identity yet, and the framework
 	// rejects an update that leaves it null.
-	setIdentity(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, result.ID, result.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
 }
@@ -256,28 +257,13 @@ func (r *CheckResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 }
 
 func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	var checkID string
-	var customerID string
-
 	// An "identity" import block is handled first; anything else is the
 	// established string form, which must keep working unchanged.
-	if idFromIdentity, customerFromIdentity, ok := identityImportValues(ctx, req, &resp.Diagnostics); ok {
-		if resp.Diagnostics.HasError() {
-			return
-		}
-		if idFromIdentity == "" {
-			resp.Diagnostics.AddError(
-				"Invalid Import Identity",
-				"The 'id' attribute of the import identity must be a non-empty check ID.",
-			)
-			return
-		}
-		checkID = idFromIdentity
-		customerID = customerFromIdentity
-	} else {
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	checkID, customerID, fromIdentity := identity.FromImport(ctx, req, &resp.Diagnostics, "check")
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !fromIdentity {
 
 		idParts := strings.Split(req.ID, ":")
 
@@ -331,7 +317,7 @@ func (r *CheckResource) ImportState(ctx context.Context, req resource.ImportStat
 		state.CustomerID = types.StringValue(customerID)
 	}
 
-	setIdentity(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
+	identity.Set(ctx, resp.Identity, state.ID, state.CustomerID, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
