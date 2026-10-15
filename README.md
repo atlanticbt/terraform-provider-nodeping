@@ -10,10 +10,15 @@ generated-by: doc-refresh skill
 This provider manages [NodePing](https://nodeping.com) monitoring as code. It manages
 checks, contacts, and the subaccounts that hold them.
 
-Atlantic BT develops this provider, and Doug Eubanks
-([@RealDougEubanks](https://github.com/RealDougEubanks)) maintains it. It started as a fork of
+[Doug Eubanks](https://github.com/RealDougEubanks) created this fork, and
+[Atlantic BT](https://www.atlanticbt.com) maintains it. It started from
 [phizzl/terraform-provider-nodeping](https://github.com/phizzl/terraform-provider-nodeping)
-by Phillip Schleicher (MPL-2.0). See [Attribution](#attribution) and [NOTICE.md](NOTICE.md).
+by Phillip Schleicher (MPL-2.0).
+
+We maintain a fork because this provider manages production monitoring, and we need to
+control its supply chain: who can merge, how changes are reviewed, and what goes into each
+signed release. The fork also adds resources and security features that are not in
+upstream. See [Attribution](#attribution) and [NOTICE.md](NOTICE.md).
 
 > **CAUTION:** This provider targets OpenTofu, not Terraform. Write-only attributes and
 > provider `for_each` operate differently in Terraform, or do not exist. See
@@ -415,8 +420,8 @@ Report a vulnerability privately. Do not open a public issue.
 
 ## Attribution
 
-[Atlantic BT](https://www.atlanticbt.com) develops this provider, and Doug Eubanks
-([@RealDougEubanks](https://github.com/RealDougEubanks)) maintains it.
+[Doug Eubanks](https://github.com/RealDougEubanks) created this fork, and
+[Atlantic BT](https://www.atlanticbt.com) maintains it.
 
 Phillip Schleicher wrote the original provider as
 [phizzl/terraform-provider-nodeping](https://github.com/phizzl/terraform-provider-nodeping).

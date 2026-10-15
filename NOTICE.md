@@ -24,9 +24,19 @@ Schleicher wrote the first implementation: the plugin framework resource layout,
 NodePing API client, and the check and contact resources. Our fork starts from that work
 and is different from it now.
 
-We made the fork because we use this provider to manage production monitoring. We needed
-control of its release schedule, its security and its test coverage. The fork is not a
-criticism of the upstream project.
+We made the fork for two reasons:
+
+1. **Supply chain control.** This provider manages production monitoring and handles API
+   tokens and check credentials. Atlantic BT controls merge permissions, reviews every
+   change, security-reviews changes to dependencies, token handling and the release
+   pipeline, and signs its own releases.
+2. **Extensions.** The fork adds the `nodeping_contactgroup`, `nodeping_schedule`,
+   `nodeping_notificationprofile`, `nodeping_maintenance` and `nodeping_subaccount`
+   resources, write-only check passwords that stay out of state, and input validation on
+   the provider configuration.
+
+The fork is not a criticism of the upstream project. We review upstream changes and take
+them through the process in [Relationship to Upstream](#relationship-to-upstream).
 
 ## License
 
