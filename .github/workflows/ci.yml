@@ -107,3 +107,52 @@ jobs:
           fi
           go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact --no-banner \
             --log-opts="$range" .
+
+  trivy:
+    name: trivy
+    runs-on: ubuntu-latest
+    env:
+      TRIVY_VERSION: 0.75.0
+      # sha256 of trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz. It was checked against
+      # the release's cosign-signed checksums file. The pin means a replaced release
+      # asset fails here instead of running.
+      TRIVY_SHA256: c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install trivy
+        run: |
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"
+          echo "${TRIVY_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" trivy
+      - name: trivy fs
+        run: |
+          "$RUNNER_TEMP/trivy" fs --scanners vuln,secret,misconfig \
+            --severity HIGH,CRITICAL --exit-code 1 --no-progress .
+
+  # Audits the workflows themselves: template injection, secrets reaching
+  # untrusted code, cache poisoning in publishing jobs, unpinned actions.
+  workflow-audit:
+    name: workflow-audit
+    runs-on: ubuntu-latest
+    env:
+      ZIZMOR_VERSION: 1.30.1
+      # sha256 of zizmor-x86_64-unknown-linux-gnu.tar.gz, whose GitHub build
+      # attestation was verified with `gh attestation verify`.
+      ZIZMOR_SHA256: e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install zizmor
+        run: |
+          tarball="zizmor-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/$tarball" \
+            "https://github.com/zizmorcore/zizmor/releases/download/v${ZIZMOR_VERSION}/${tarball}"
+          echo "${ZIZMOR_SHA256}  $RUNNER_TEMP/$tarball" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$tarball" -C "$RUNNER_TEMP" zizmor
+      - name: zizmor
+        run: '"$RUNNER_TEMP/zizmor" --offline --no-progress --min-severity low --format github .github/workflows'

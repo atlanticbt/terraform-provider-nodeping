@@ -92,7 +92,8 @@ Docs, comments and commit messages are specific and concrete.
 7. Open a pull request with a clear title and description.
 
 CI (continuous integration) runs the same checks: `fmt-vet`, `lint`, `test`, `vulncheck`
-and `secret-scan`. CI also reports the total test coverage.
+and `secret-scan`. CI also runs `trivy` and `workflow-audit` (zizmor), and reports the total
+test coverage. See [docs/releasing.md](docs/releasing.md#ci-status-checks).
 
 ## Common Tasks
 

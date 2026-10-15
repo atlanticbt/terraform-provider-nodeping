@@ -31,7 +31,7 @@ jobs:
   ci:
     name: ci
     needs: verify-tag
-    uses: ./.github/workflows/ci.yml
+    uses: $/.github/workflows/ci.yml
     permissions:
       contents: read
 
@@ -39,6 +39,9 @@ jobs:
     name: release
     needs: [verify-tag, ci]
     runs-on: ubuntu-latest
+    # The signing secrets live on the "release" environment, which only v* tags
+    # can deploy to. Branch and pull request runs cannot read them.
+    environment: release
     permissions:
       contents: write
     steps:
@@ -49,6 +52,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod # the toolchain line in go.mod is the single source
+          # A restored build cache could inject code into a signed release.
+          cache: false
       # The registries verify the SHA256SUMS signature against the public key
       # registered for the namespace. See docs/releasing.md.
       - name: Import release signing key
