@@ -196,7 +196,7 @@ a private repository on this plan. They become available when the repository is 
    - Keep the bypass list empty.
 3. Go to **Settings > Rules > Rulesets > New tag ruleset**. Target `v*`. Set these rules:
    - Restrict creations, updates and deletions.
-   - Add the `nodeping-maintainers` team to the bypass list, for creation only.
+   - Add the `it-admin` team to the bypass list, for creation only.
 
    This ruleset stops other persons from creating a release tag. It also stops all persons
    from moving or deleting a published tag.
@@ -214,7 +214,7 @@ a private repository on this plan. They become available when the repository is 
    - **Build provenance and SBOM** for releases: `actions/attest-build-provenance` in the
      release job, and an `sboms` section in `.goreleaser.yml`. The release job then needs
      `id-token: write` and `attestations: write`.
-6. Make sure that the team `@atlanticbt/nodeping-maintainers` exists and has write access.
+6. Make sure that the team `@atlanticbt/it-admin` has write access or higher.
    If it does not, `CODEOWNERS` cannot find the code owners.
 
 ## CI status checks

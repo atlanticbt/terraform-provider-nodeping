@@ -258,7 +258,7 @@ the place where the split was bypassed.
 3. Add tests for each change. Add a regression test for each bug fix.
 4. Update the docs in `docs/` when behavior changes. `internal/provider/docs_drift_test.go`
    fails when the schema and the docs do not agree.
-5. Get one approval from a code owner (`@atlanticbt/nodeping-maintainers`). CI must pass.
+5. Get one approval from a code owner (`@atlanticbt/it-admin`). CI must pass.
 
 ## PR Checklist
 
