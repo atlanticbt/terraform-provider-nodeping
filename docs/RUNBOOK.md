@@ -155,5 +155,5 @@ gets a new ID and loses its result history.
 |---|---|
 | A provider defect | Open a GitHub issue in `atlanticbt/terraform-provider-nodeping`. Remove all secrets. |
 | A security vulnerability | Follow [SECURITY.md](../SECURITY.md). Do not open a public issue. |
-| No response in a reasonable time | Contact the code owners, `@atlanticbt/nodeping-maintainers` (`.github/CODEOWNERS`). |
+| No response in a reasonable time | Contact the code owners, `@atlanticbt/it-admin` (`.github/CODEOWNERS`). |
 | A NodePing service problem | Contact NodePing support. |
