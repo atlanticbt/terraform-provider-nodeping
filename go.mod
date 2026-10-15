@@ -1,4 +1,4 @@
-module github.com/atlanticbt/terraform-provider-nodeping
+module github.com/atlanticbt/terraform-provider-nodeping/v2
 
 go 1.26.0
 

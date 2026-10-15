@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
+	"github.com/atlanticbt/terraform-provider-nodeping/v2/internal/resources/identity"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/v2/internal/client"
 )
 
 var (

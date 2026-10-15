@@ -11,12 +11,17 @@ This file records all important changes to this provider. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version numbers follow
 [SemVer](https://semver.org/) (Semantic Versioning).
 
-## [Unreleased]
+## [2.0.0]
 
 This is the first public release from `github.com/atlanticbt/terraform-provider-nodeping`.
-The OpenTofu registry publishes it as `atlanticbt/nodeping`.
+The OpenTofu registry publishes it as `atlanticbt/nodeping`. Set the release date on this
+heading when you tag it.
 
 ### Breaking changes
+
+- The Go module path is now `github.com/atlanticbt/terraform-provider-nodeping/v2`. Go
+  requires the `/v2` suffix for a v2 module. This affects only code that imports the
+  packages. The provider address `atlanticbt/nodeping` and the binary name do not change.
 
 - The provider does not read the API token from `NODEPING_API_KEY` now. Set `api_token`
   or `NODEPING_API_TOKEN`. The documentation never described this fallback. An unknown

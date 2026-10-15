@@ -15,7 +15,8 @@ The items are in order of what blocks production use of this provider.
 |---|---|---|
 | v1.0.0 | Done | Complete API coverage, write-only credentials, resource identity |
 | v1.1.0 | Done | Live acceptance tests, fixes for defects that the live API showed |
-| Next | Planned | Public registry releases, generated docs |
+| v2.0.0 | In progress | First public release on the OpenTofu registry. Go module path `/v2`. |
+| Next | Planned | Generated docs |
 | Later | Not scheduled | See [Later](#later) |
 
 ## Done: v1.0.0

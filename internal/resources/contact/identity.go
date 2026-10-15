@@ -3,7 +3,7 @@ package contact
 import (
 	"context"
 
-	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
+	"github.com/atlanticbt/terraform-provider-nodeping/v2/internal/resources/identity"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 )

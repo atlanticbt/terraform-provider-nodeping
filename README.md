@@ -39,7 +39,7 @@ upstream. See [Attribution](#attribution) and [NOTICE.md](NOTICE.md).
      required_providers {
        nodeping = {
          source  = "atlanticbt/nodeping"
-         version = "~> 1.1"
+         version = "~> 2.0"
        }
      }
    }
@@ -146,7 +146,7 @@ terraform {
   required_providers {
     nodeping = {
       source  = "atlanticbt/nodeping"
-      version = "~> 1.1"
+      version = "~> 2.0"
     }
   }
 }
