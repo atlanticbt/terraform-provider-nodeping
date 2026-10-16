@@ -44,6 +44,8 @@ jobs:
     environment: release
     permissions:
       contents: write
+      id-token: write # sign the provenance and SBOM attestations
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -62,6 +64,10 @@ jobs:
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
           passphrase: ${{ secrets.PASSPHRASE }}
+      # GoReleaser names files with the version without the leading "v".
+      - name: Version
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
@@ -72,3 +78,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_FINGERPRINT: ${{ steps.gpg.outputs.fingerprint }}
+      # Build provenance for every archive in SHA256SUMS. Users can check a
+      # download with `gh attestation verify <archive> -R <this repo>`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/terraform-provider-nodeping_${{ steps.version.outputs.version }}_SHA256SUMS
+      - name: Generate SBOM
+        run: |
+          go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 \
+            app -json -licenses -std -main . \
+            -output "dist/terraform-provider-nodeping_${VERSION}_sbom.cdx.json" .
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+      - name: Attest SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-checksums: dist/terraform-provider-nodeping_${{ steps.version.outputs.version }}_SHA256SUMS
+          sbom-path: dist/terraform-provider-nodeping_${{ steps.version.outputs.version }}_sbom.cdx.json
+      - name: Attach SBOM to the release
+        run: gh release upload "$GITHUB_REF_NAME" "dist/terraform-provider-nodeping_${VERSION}_sbom.cdx.json"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}

@@ -17,7 +17,7 @@ maintainer pushes a `v*` tag. The workflow is `.github/workflows/release.yml`.
 | Create the release signing key | One time | [Release signing key](#release-signing-key) |
 | Make a release | Each release | [Make a release](#make-a-release) |
 | Register with the registries | One time, after the repository is public | [Register with the registries](#register-with-the-registries) |
-| Make the repository public | One time | [Make the repository public](#make-the-repository-public) |
+| Check the repository settings | After a change to the GitHub plan or the workflows | [Repository settings](#repository-settings) |
 | Set up scheduled acceptance tests | One time | [Scheduled acceptance tests](#scheduled-acceptance-tests) |
 
 ## Release signing key
@@ -90,7 +90,7 @@ pass.
 |---|---|
 | `verify-tag` | Stops the release if the tagged commit is not on `main`. |
 | `ci` | Runs the full CI suite on the tagged commit. See [CI status checks](#ci-status-checks). |
-| `release` | Builds the six platform archives with GoReleaser. Signs `SHA256SUMS`. Publishes a GitHub release. Runs in the `release` environment, which holds the signing secrets. It does not restore a Go build cache. |
+| `release` | Builds the six platform archives with GoReleaser. Signs `SHA256SUMS`. Publishes a GitHub release. Attests build provenance for each archive, and attaches a CycloneDX SBOM with its own attestation. Runs in the `release` environment, which holds the signing secrets. It does not restore a Go build cache. |
 
 ### Major versions
 
@@ -130,6 +130,13 @@ reject the version. The provider address does not change.
    - `terraform-provider-nodeping_<version>_SHA256SUMS`
    - The signature file for `SHA256SUMS`
    - `terraform-provider-nodeping_<version>_manifest.json`
+   - `terraform-provider-nodeping_<version>_sbom.cdx.json`
+8. Check the attestations of one archive:
+
+   ```sh
+   gh attestation verify terraform-provider-nodeping_<version>_linux_amd64.zip \
+     -R atlanticbt/terraform-provider-nodeping
+   ```
 
 After you register the provider, both registries find new GitHub releases automatically.
 
@@ -159,70 +166,27 @@ forms in the `opentofu/registry` repository. Do not use pull requests or the API
 
 ## Repository settings
 
-These settings work on a private repository on GitHub Free. They were applied on
-2026-10-15. Check them again after any change to the organization's plan.
+The repository is public since 2026-10-16. These settings were applied on that date.
 
 | Setting | Value |
 |---|---|
-| **Actions > General > Actions permissions** | Allow GitHub-owned actions and these patterns: `crazy-max/ghaction-import-gpg@*`, `goreleaser/goreleaser-action@*`, `opentofu/setup-opentofu@*`. Require actions to be pinned to a full-length commit SHA. |
+| **Actions > General > Actions permissions** | Allow GitHub-owned actions and these patterns: `crazy-max/ghaction-import-gpg@*`, `goreleaser/goreleaser-action@*`, `opentofu/setup-opentofu@*`, `ossf/scorecard-action@*`. Require actions to be pinned to a full-length commit SHA. |
 | **Actions > General > Workflow permissions** | Read-only. Actions cannot approve pull requests. |
 | **Environments > `release`** | Deployment tags: `v*` only. Holds `GPG_PRIVATE_KEY` and `PASSPHRASE`. |
 | **Environments > `acceptance`** | Deployment branches: `main` only. Holds the NodePing test-account secrets. See [Scheduled acceptance tests](#scheduled-acceptance-tests). |
-| **Code security** | Dependabot alerts and Dependabot security updates on. |
+| **Rules > `main protection`** | Default branch. No deletion, no force push. A pull request with 1 approval and a code-owner review. New pushes dismiss approvals. These status checks must pass, on an up-to-date branch: `fmt-vet`, `lint`, `test`, `vulncheck`, `secret-scan`, `trivy`, `workflow-audit`, `dependency-review`. No bypass. |
+| **Rules > `release tags are immutable`** | `v*` tags. No update, no deletion. No bypass. |
+| **Rules > `only it-admin and repo admins create release tags`** | `v*` tags. Only the `it-admin` team and repository admins can create one. This is a separate ruleset because a bypass applies to a whole ruleset, not to one rule. |
+| **Code security** | Secret scanning, push protection, private vulnerability reporting, Dependabot alerts and security updates, and CodeQL default setup (Go and GitHub Actions). |
 | **General** | Wiki and Projects off. Head branches are deleted after merge. |
 
 To add an action from a new owner, add its pattern to the allowed list first. If you do
 not, every workflow that uses it fails at startup.
 
-## Make the repository public
-
-The organization uses GitHub Free. Branch rulesets and secret scanning are not available for
-a private repository on this plan. They become available when the repository is public.
-
-> **SECURITY:** When you make the repository public, all of its history becomes public.
-> Before step 1, scan the full history:
+> **SECURITY:** If this repository is ever recreated or another repository is made
+> public, scan the full history first:
 > `go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --redact .`
-> The only accepted finding is the one in `.gitleaksignore`. Then delete and recreate the
-> GitHub repository and push again, or ask GitHub Support to purge unreachable commits.
 > After a force-push, GitHub keeps old commits reachable by their hash.
-
-> **SECURITY:** Until you complete step 2, anyone with write access can push to `main`.
-> Do all steps in one session.
-
-1. Go to **Settings > General > Danger Zone > Change visibility**. Select public.
-2. Go to **Settings > Rules > Rulesets > New branch ruleset**. Target the default branch.
-   Set these rules:
-   - Restrict deletions.
-   - Block force pushes.
-   - Require a pull request before merging, with 1 approval.
-   - Require review from Code Owners.
-   - Dismiss stale approvals when new commits are pushed.
-   - Require these status checks to pass: `fmt-vet`, `lint`, `test`, `vulncheck`,
-     `secret-scan`, `trivy`, `workflow-audit`.
-   - Require the branch to be up to date before merging.
-   - Keep the bypass list empty.
-3. Go to **Settings > Rules > Rulesets > New tag ruleset**. Target `v*`. Set these rules:
-   - Restrict creations, updates and deletions.
-   - Add the `it-admin` team to the bypass list, for creation only.
-
-   This ruleset stops other persons from creating a release tag. It also stops all persons
-   from moving or deleting a published tag.
-4. Go to **Settings > Code security**. Enable these features:
-   - Secret scanning
-   - Push protection
-   - Private vulnerability reporting. `SECURITY.md` tells reporters to use it.
-5. Add the checks that GitHub Free does not offer on a private repository:
-   - **CodeQL** for Go: **Settings > Code security > Code scanning > Set up > Default**.
-   - **Dependency review** on pull requests: a `pull_request` job with
-     `actions/dependency-review-action`, pinned to a commit SHA, set to fail on HIGH.
-     Add `dependency-review` to the required status checks in step 2.
-   - **OpenSSF Scorecard**: `ossf/scorecard-action`, pinned to a commit SHA, on a weekly
-     schedule. Add `ossf/scorecard-action@*` to the allowed actions first.
-   - **Build provenance and SBOM** for releases: `actions/attest-build-provenance` in the
-     release job, and an `sboms` section in `.goreleaser.yml`. The release job then needs
-     `id-token: write` and `attestations: write`.
-6. Make sure that the team `@atlanticbt/it-admin` has write access or higher.
-   If it does not, `CODEOWNERS` cannot find the code owners.
 
 ## CI status checks
 
@@ -238,6 +202,11 @@ release workflow also runs it. The job names are the required status checks.
 | `secret-scan` | gitleaks v8.30.1 on the commits that the change adds |
 | `trivy` | Trivy v0.75.0 on the working tree: HIGH and CRITICAL vulnerabilities, secrets and misconfigurations |
 | `workflow-audit` | zizmor v1.30.1 on `.github/workflows`: template injection, secrets that reach untrusted code, cache poisoning, unpinned actions |
+| `dependency-review` | Pull requests only. Fails when the change adds a dependency with a HIGH or CRITICAL vulnerability. In `dependency-review.yml`. |
+
+Two other workflows are not required checks. `scorecard.yml` runs OpenSSF Scorecard on
+each push to `main` and weekly, and uploads the results to code scanning. CodeQL runs
+from GitHub's default setup, not from a workflow file.
 
 The `trivy` and `workflow-audit` jobs download a release binary and check its SHA-256
 against a hash in `ci.yml`. To update either tool, verify the new release first (the
