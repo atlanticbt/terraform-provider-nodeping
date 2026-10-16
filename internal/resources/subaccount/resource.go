@@ -286,13 +286,13 @@ func (r *SubaccountResource) ImportState(ctx context.Context, req resource.Impor
 		if fromIdentity {
 			resp.Diagnostics.AddError(
 				"Invalid Import Identity",
-				"The 'id' attribute of the import identity must be a non-empty NodePing account ID such as '201203232048C76FH'.",
+				"The 'id' attribute of the import identity must be a non-empty NodePing account ID such as '201205102227VZ6XU'.",
 			)
 			return
 		}
 		resp.Diagnostics.AddError(
 			"Invalid Import ID",
-			"Expected a NodePing account ID such as '201203232048C76FH', got an empty string.",
+			"Expected a NodePing account ID such as '201205102227VZ6XU', got an empty string.",
 		)
 		return
 	}

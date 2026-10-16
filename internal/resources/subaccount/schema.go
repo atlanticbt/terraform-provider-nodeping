@@ -138,7 +138,7 @@ deletes everything in it.
 ## Import
 
 ` + "```shell" + `
-terraform import nodeping_subaccount.client 201203232048C76FH
+terraform import nodeping_subaccount.client 201205102227VZ6XU
 ` + "```" + `
 
 Import cannot recover ` + "`contactname`" + `, ` + "`email`" + `,

@@ -224,7 +224,7 @@ func TestListMaintenanceDecodesTheEnvelope(t *testing.T) {
 	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"customer_id": "201203232048C76FH",
+			"customer_id": "201205102227VZ6XU",
 			"schedules": {
 				"9VKOB": {"id":"9VKOB","name":"Weekly","enabled":true,"cron":"0 3 * * 0","duration":60,"checklist":["C1"]}
 			},
@@ -254,7 +254,7 @@ func TestListMaintenanceFlagsWindowsUnderTheAdHocKey(t *testing.T) {
 	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
-			"customer_id": "201203232048C76FH",
+			"customer_id": "201205102227VZ6XU",
 			"schedules": {"9VKOB": {"id":"9VKOB","name":"Weekly","duration":60}},
 			"ad-hoc": {"9VKOC": {"id":"9VKOC","name":"One off","duration":30}}
 		}`))
@@ -280,7 +280,7 @@ func TestListMaintenanceFlagsWindowsUnderTheAdHocKey(t *testing.T) {
 func TestListMaintenanceReturnsNoWindowsForAnEmptyEnvelope(t *testing.T) {
 	c := newMaintenanceTestClient(t, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"customer_id":"201203232048C76FH","schedules":{},"ad-hoc":{}}`))
+		_, _ = w.Write([]byte(`{"customer_id":"201205102227VZ6XU","schedules":{},"ad-hoc":{}}`))
 	})
 
 	got, err := c.ListMaintenance(context.Background())

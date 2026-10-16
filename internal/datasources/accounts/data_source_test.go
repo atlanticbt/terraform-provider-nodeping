@@ -184,7 +184,7 @@ func TestReadHandlesTheSingleAccountDocument(t *testing.T) {
 	d := newTestDataSource(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		if err := json.NewEncoder(w).Encode(map[string]interface{}{
-			"_id":           "201203232048C76FH",
+			"_id":           "201205102227VZ6XU",
 			"type":          "subcustomer",
 			"status":        "Active",
 			"customer_name": "Example Client",
@@ -206,7 +206,7 @@ func TestReadHandlesTheSingleAccountDocument(t *testing.T) {
 		t.Fatalf("expected 1 account, got %d", len(state.Accounts))
 	}
 	account := state.Accounts[0]
-	if account.ID.ValueString() != "201203232048C76FH" {
+	if account.ID.ValueString() != "201205102227VZ6XU" {
 		t.Errorf("id = %q", account.ID.ValueString())
 	}
 	if account.Name.ValueString() != "Example Client" {

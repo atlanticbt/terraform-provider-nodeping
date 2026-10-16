@@ -120,7 +120,7 @@ If you plan a new subaccount without all three, the plan fails.
 
 ### Read-Only
 
-- `id` (String) The customer ID of the subaccount, for example `201203232048C76FH`.
+- `id` (String) The customer ID of the subaccount, for example `201205102227VZ6XU`.
 - `type` (String) The account type that NodePing reports, for example `subcustomer`.
 - `creation_date` (Number) The creation time that NodePing reports.
 - `next_billing_date` (String) The next billing date that NodePing reports.
@@ -131,7 +131,7 @@ If you plan a new subaccount without all three, the plan fails.
 Import a subaccount by its customer ID:
 
 ```shell
-tofu import nodeping_subaccount.client 201203232048C76FH
+tofu import nodeping_subaccount.client 201205102227VZ6XU
 ```
 
 With OpenTofu 1.12 or later, you can also use an `import` block with an `identity`.
@@ -141,7 +141,7 @@ The identity has one attribute, `id`. It has no `customer_id`, because the subac
 import {
   to = nodeping_subaccount.client
   identity = {
-    id = "201203232048C76FH"
+    id = "201205102227VZ6XU"
   }
 }
 ```
