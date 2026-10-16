@@ -17,7 +17,7 @@ import (
 	"github.com/atlanticbt/terraform-provider-nodeping/v2/internal/client"
 )
 
-const accountID = "201203232048C76FH"
+const accountID = "201205102227VZ6XU"
 
 func newTestDataSource(t *testing.T, handler http.HandlerFunc) *AccountDataSource {
 	t.Helper()

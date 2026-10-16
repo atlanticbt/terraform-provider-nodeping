@@ -225,7 +225,7 @@ resource to select the subaccount. A token for one subaccount needs no `customer
 
 ```hcl
 resource "nodeping_check" "client_site" {
-  customer_id = "201203232048C76FH"
+  customer_id = "201205102227VZ6XU"
   label       = "client site prod"
   type        = "HTTP"
   target      = "https://www.example.net"
@@ -309,7 +309,7 @@ Import a resource with its ID. For a subaccount resource, put the customer ID fi
 
 ```bash
 tofu import nodeping_check.www CHECK-ID
-tofu import nodeping_check.client 201203232048C76FH:CHECK-ID
+tofu import nodeping_check.client 201205102227VZ6XU:CHECK-ID
 ```
 
 The subaccount form writes `customer_id` into state. Later plans then use the same account.
@@ -325,7 +325,7 @@ import {
   to = nodeping_check.client
   identity = {
     id          = "CHECK-ID"
-    customer_id = "201203232048C76FH"
+    customer_id = "201205102227VZ6XU"
   }
 }
 ```

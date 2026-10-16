@@ -201,7 +201,7 @@ func TestDataSourceReadDecodesTheMaintenanceEnvelope(t *testing.T) {
 
 	d := newTestDataSource(t, func(w http.ResponseWriter, req *http.Request) {
 		_, _ = w.Write([]byte(`{
-			"customer_id":"201203232048C76FH",
+			"customer_id":"201205102227VZ6XU",
 			"schedules":{"A1":{"id":"A1","name":"first","enabled":true,"cron":"0 3 * * 0","duration":60,"checklist":["C1"]}},
 			"ad-hoc":{"B2":{"id":"B2","name":"one off","enabled":true,"duration":15,"checklist":["C1"]}}
 		}`))

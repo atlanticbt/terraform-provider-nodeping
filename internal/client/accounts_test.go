@@ -27,7 +27,7 @@ func newAccountsTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	})
 }
 
-const testAccountID = "201203232048C76FH"
+const testAccountID = "201205102227VZ6XU"
 
 func writeJSON(t *testing.T, w http.ResponseWriter, status int, body interface{}) {
 	t.Helper()
@@ -44,7 +44,7 @@ func writeJSON(t *testing.T, w http.ResponseWriter, status int, body interface{}
 
 func TestAccountUnmarshalDecodesCanonicalDocument(t *testing.T) {
 	raw := `{
-		"_id": "201203232048C76FH",
+		"_id": "201205102227VZ6XU",
 		"type": "subcustomer",
 		"customer_name": "Example Client",
 		"creation_date": 1332535680000,
