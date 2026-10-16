@@ -68,6 +68,17 @@ jobs:
       - name: Version
         id: version
         run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # The repository uses immutable releases: no file can be added after
+      # GoReleaser publishes. So the SBOM is generated first, outside dist/
+      # (which --clean empties), and GoReleaser attaches it as an extra file.
+      - name: Generate SBOM
+        run: |
+          mkdir -p sbom
+          go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 \
+            app -json -licenses -std -main . \
+            -output "sbom/terraform-provider-nodeping_${VERSION}_sbom.cdx.json" .
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
@@ -84,20 +95,8 @@ jobs:
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-checksums: dist/terraform-provider-nodeping_${{ steps.version.outputs.version }}_SHA256SUMS
-      - name: Generate SBOM
-        run: |
-          go run github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.12.0 \
-            app -json -licenses -std -main . \
-            -output "dist/terraform-provider-nodeping_${VERSION}_sbom.cdx.json" .
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
       - name: Attest SBOM
         uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
         with:
           subject-checksums: dist/terraform-provider-nodeping_${{ steps.version.outputs.version }}_SHA256SUMS
-          sbom-path: dist/terraform-provider-nodeping_${{ steps.version.outputs.version }}_sbom.cdx.json
-      - name: Attach SBOM to the release
-        run: gh release upload "$GITHUB_REF_NAME" "dist/terraform-provider-nodeping_${VERSION}_sbom.cdx.json"
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          sbom-path: sbom/terraform-provider-nodeping_${{ steps.version.outputs.version }}_sbom.cdx.json

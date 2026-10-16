@@ -50,6 +50,8 @@ release:
   extra_files:
     - glob: terraform-registry-manifest.json
       name_template: '{{ .ProjectName }}_{{ .Version }}_manifest.json'
+    # Written by the release workflow before GoReleaser runs. See release.yml.
+    - glob: ./sbom/*.cdx.json
 
 changelog:
   use: github
