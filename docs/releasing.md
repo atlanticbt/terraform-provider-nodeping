@@ -130,7 +130,10 @@ reject the version. The provider address does not change.
    - `terraform-provider-nodeping_<version>_SHA256SUMS`
    - The signature file for `SHA256SUMS`
    - `terraform-provider-nodeping_<version>_manifest.json`
-   - `terraform-provider-nodeping_<version>_sbom.cdx.json`
+   - `terraform-provider-nodeping_<version>_sbom.cdx.json`. The `v2.0.0` release does not
+     have this file: the workflow tried to add it after the release was published, and
+     releases here are immutable. Its SBOM is in the signed attestation instead:
+     `gh attestation verify <archive> -R atlanticbt/terraform-provider-nodeping --predicate-type https://cyclonedx.org/bom --format json`.
 8. Check the attestations of one archive:
 
    ```sh

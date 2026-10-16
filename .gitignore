@@ -82,3 +82,7 @@ vendor/
 
 # Local agent instructions; not part of the published repository
 CLAUDE.md
+
+# SBOM written by the release workflow before GoReleaser. Ignored so the
+# working tree stays clean, which GoReleaser requires.
+sbom/
