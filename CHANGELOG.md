@@ -11,11 +11,10 @@ This file records all important changes to this provider. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version numbers follow
 [SemVer](https://semver.org/) (Semantic Versioning).
 
-## [2.0.0]
+## [2.0.0] - 2026-10-16
 
 This is the first public release from `github.com/atlanticbt/terraform-provider-nodeping`.
-The OpenTofu registry publishes it as `atlanticbt/nodeping`. Set the release date on this
-heading when you tag it.
+The OpenTofu registry publishes it as `atlanticbt/nodeping`.
 
 ### Breaking changes
 
@@ -48,8 +47,11 @@ heading when you tag it.
   has no limits. Thus these limits come from the provider. They are much larger than
   usual values.
 - GitHub Actions CI (continuous integration): format, vet, golangci-lint with security
-  linters, race tests, govulncheck and gitleaks. Also signed releases and a weekly live
-  acceptance test run.
+  linters, race tests in random order with a 90% coverage gate, govulncheck, gitleaks,
+  Trivy, zizmor and dependency review. Also signed releases and a weekly live acceptance
+  test run.
+- Each release has build provenance attestations for its archives and a CycloneDX SBOM.
+  Check a download with `gh attestation verify <archive> -R atlanticbt/terraform-provider-nodeping`.
 
 ### Changed
 
