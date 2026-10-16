@@ -56,7 +56,7 @@ Docs, comments and commit messages are specific and concrete.
 | Item | Value |
 |---|---|
 | Provider address | `atlanticbt/nodeping` (`registry.opentofu.org/atlanticbt/nodeping`) |
-| Go module path | `github.com/atlanticbt/terraform-provider-nodeping` |
+| Go module path | `github.com/atlanticbt/terraform-provider-nodeping/v2`. The suffix must match the major version. |
 | License | MPL-2.0 (Mozilla Public License 2.0), the same as upstream |
 
 1. Do not use the upstream address `phizzl/nodeping` or the upstream module path. Both

@@ -5,7 +5,7 @@ import (
 	"flag"
 	"log"
 
-	"github.com/atlanticbt/terraform-provider-nodeping/internal/provider"
+	"github.com/atlanticbt/terraform-provider-nodeping/v2/internal/provider"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 )
 

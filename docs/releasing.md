@@ -92,13 +92,20 @@ pass.
 | `ci` | Runs the full CI suite on the tagged commit. See [CI status checks](#ci-status-checks). |
 | `release` | Builds the six platform archives with GoReleaser. Signs `SHA256SUMS`. Publishes a GitHub release. Runs in the `release` environment, which holds the signing secrets. It does not restore a Go build cache. |
 
+### Major versions
+
+The Go module path ends in the major version: `/v2` for 2.x. A release that goes to a new
+major version must also change the module path, for example to `/v3`. Use
+`go mod edit -module` and update every import. If you do not, `go install` and `go get`
+reject the version. The provider address does not change.
+
 ### Procedure
 
 > **SECURITY:** A pushed `v*` tag starts a signed public release. Tag only a commit that
 > has an approved pull request on `main`.
 
 1. Merge all changes for the release to `main`.
-2. Update `CHANGELOG.md`. Merge that change to `main`.
+2. Update `CHANGELOG.md`. Set the date on the version heading. Merge that change to `main`.
 3. Set your own signing key in Git. Do this one time only:
 
    ```sh
@@ -108,13 +115,13 @@ pass.
 4. Make a signed tag:
 
    ```sh
-   git tag -s v1.2.0 -m "v1.2.0"
+   git tag -s v2.0.0 -m "v2.0.0"
    ```
 
 5. Push the tag:
 
    ```sh
-   git push origin v1.2.0
+   git push origin v2.0.0
    ```
 
 6. Go to **Actions > Release**. Make sure that all three jobs pass.

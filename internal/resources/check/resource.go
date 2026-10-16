@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/atlanticbt/terraform-provider-nodeping/internal/resources/identity"
+	"github.com/atlanticbt/terraform-provider-nodeping/v2/internal/resources/identity"
 
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
-	"github.com/atlanticbt/terraform-provider-nodeping/internal/client"
+	"github.com/atlanticbt/terraform-provider-nodeping/v2/internal/client"
 )
 
 var (
